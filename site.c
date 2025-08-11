@@ -1,131 +1,166 @@
 #include "site.h"
 
+const char error_response[] =
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Type: text/plain\r\n"
+    "\r\n";
+
+void urldecode(char* dst, const char* src);
+void urlencode(char* dest, const char* src);
+void makeabsolute(char* dest, const char* src);
+
 void* thread_fn(void* arg) {
-  int client_fd = *((int*)arg);
-  free(arg);
+    int client_fd = *((int*) arg);
+    free(arg);
 
-  char buffer[BUFFER_SIZE];
-  memset(buffer, 0, BUFFER_SIZE);
+    char buffer[BUFFER_SIZE];
+    memset(buffer, 0, BUFFER_SIZE);
 
-  ssize_t read_bytes = read(client_fd, buffer, BUFFER_SIZE - 1);
-  if (read_bytes > 0) {
-    buffer[read_bytes] = '\0';
-    printf("Request:\n%s\n", buffer);  // debug log
-  }
+    ssize_t read_bytes = read(client_fd, buffer, BUFFER_SIZE - 1);
+    if(read_bytes > 0) {
+        buffer[read_bytes] = '\0';
+        printf("Request:\n%s\n", buffer);    // debug log
+    }
 
-  // Reading index.html
-  int index_fd = -1;
-  if ((index_fd = open("index.html", O_RDONLY)) < 0) {
-    char msg[] = "Could not open index.html!";
-    write(STDERR_FILENO, msg, sizeof(msg));
-    const char* error_response =
-        "HTTP/1.1 404 Not Found\r\n"
-        "Content-Type: text/plain\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "404 Not Found - Could not open index.html";
-    write(client_fd, error_response, strlen(error_response));
-    close(client_fd);
-    pthread_exit((void*)1);
-  }
+    // Parsing the header
+    Header header;
+    char* token = strtok(buffer, " \r\n");
+    strcpy(header.method, token);
+    token = strtok(NULL, " \r\n");
+    // Decode the url
+    char* query = strchr(token, '?');
+    char tmp[BUFFER_SIZE];
+    query ? strncpy(header.path, token, query - token) :
+            strcpy(header.path, token);
+    urldecode(tmp, header.path);
+    makeabsolute(header.path, tmp);
+    token = strtok(NULL, " \r\n");
+    strcpy(header.version, token);
 
-  // Constructing and sending the header
-  off_t offset = (off_t)-1;
-  if ((offset = lseek(index_fd, 0, SEEK_END)) < (off_t)0) {
-    char msg[] = "Could not construct header!";
-    write(STDERR_FILENO, msg, sizeof(msg));
-    pthread_exit((void*)1);
-  }
-  lseek(index_fd, 0, SEEK_SET);
+    printf("Method:%s\n", header.method);
+    printf("Path:%s\n", header.path);
+    printf("Version:%s\n", header.version);
 
-  char header[BUFFER_SIZE] =
-      "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: ";
-  if ((snprintf(header + strlen(header), BUFFER_SIZE - strlen(header) - 1,
-                "%lu%s", offset, "\r\n\r\n")) < 0) {
-    char msg[] = "Could not construct header!";
-    write(STDERR_FILENO, msg, sizeof(msg));
-    pthread_exit((void*)1);
-  }
-  printf("%s\n", header);
-  if (write(client_fd, header, strlen(header)) < 0) {
-    char msg[] = "Could not send header!";
-    write(STDERR_FILENO, msg, sizeof(msg));
-    pthread_exit((void*)1);
-  }
+    if(strcmp(header.version, "HTTP/1.1") != 0) {
+        fprintf(stderr, "Unsupported HTTP version!");
+        write(client_fd, error_response, sizeof(error_response));
+        close(client_fd);
+        pthread_exit((void*) 1);
+    }
 
-  while (read(index_fd, buffer, BUFFER_SIZE) > 0) {
-    write(client_fd, buffer, strlen(buffer));
-    printf("%s", buffer);
-  }
-  close(index_fd);
+    if(strcmp(header.method, "GET") != 0) {
+        fprintf(stderr, "Unsupported HTTP method!");
+        write(client_fd, error_response, sizeof(error_response));
+        close(client_fd);
+        pthread_exit((void*) 1);
+    }
+    if(header.path[0] != '/') {
+        fprintf(stderr, "The path must be absolute!");
+        write(client_fd, error_response, sizeof(error_response));
+        close(client_fd);
+        pthread_exit((void*) 1);
+    }
+    memmove(header.path, header.path + 1, strlen(header.path));
 
-  // Polling for password
-  if (read(client_fd, buffer, BUFFER_SIZE - 1) < 0) {
-    char msg[] = "Could not read answer!";
-    write(STDERR_FILENO, msg, sizeof(msg));
-    pthread_exit((void*)1);
-  }
-  if (strstr(buffer, "GET /?password=") == NULL) {
-    const char* response =
-        "HTTP/1.1 404 Not Found\r\n"
-        "Connection: close\r\n\r\n";
-    write(client_fd, response, strlen(response));
-    close(client_fd);
-    pthread_exit(NULL);
-  }
+    if(strcmp(header.path, "") == 0) {
+        strcpy(header.path, ".");
+    }
 
-  printf("Request with password:\n%s\n", buffer);  // debug log
+    int file_fd = -1;
+    if((file_fd = open(header.path, O_RDONLY)) < 0) {
+        const char resp[] =
+            "HTTP/1.1 404 Not Found\r\n"
+            "\r\n";
+        write(client_fd, resp, sizeof(resp));
+    } else {
+        DIR* dir = fdopendir(file_fd);
+        const char resp[] =
+            "HTTP/1.1 200 OK\r\n"
+            "Content-type: text/plain\r\n"
+            "\r\n";
+        write(client_fd, resp, sizeof(resp));
+        while((read_bytes = read(file_fd, buffer, BUFFER_SIZE)) > 0) {
+            write(client_fd, buffer, read_bytes);
+        }
 
-  // Processing the request with the password
-  char* token = strtok(buffer, " ");
-  while (token != NULL && strstr(token, "/?password=") == NULL) {
-    token = strtok(NULL, " ");
-  }
-  char* password = strchr(token, '=') + 1;
-  printf("\n%s\n", password);
+        close(file_fd);
+    }
 
-  // Check password
-  if (strcmp("azorvosfia", password) != 0) {
-    const char* error_response =
-        "HTTP/1.1 404 Not Found\r\n"
-        "Content-Type: text/plain\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "404 Not Found";
-    write(client_fd, error_response, strlen(error_response));
     close(client_fd);
     pthread_exit(NULL);
-  }
+}
 
-  // Open film website
-  int movies_fd = -1;
-  if ((movies_fd = open("movies.html", O_RDWR | O_CREAT | O_TRUNC, 0644)) < 0) {
-    char msg[] = "Could not open movies.html!";
-    write(STDERR_FILENO, msg, sizeof(msg));
-    pthread_exit((void*)1);
-  }
+void urldecode(char* dst, const char* src) {
+    char a, b;
+    while(*src) {
+        if((*src == '%') && ((a = src[1]) && (b = src[2])) &&
+           (isxdigit(a) && isxdigit(b))) {
+            if(a >= 'a') a -= 'a' - 'A';
+            if(a >= 'A') a -= ('A' - 10);
+            else
+                a -= '0';
+            if(b >= 'a') b -= 'a' - 'A';
+            if(b >= 'A') b -= ('A' - 10);
+            else
+                b -= '0';
+            *dst++ = 16 * a + b;
+            src += 3;
+        } else if(*src == '+') {
+            *dst++ = ' ';
+            src++;
+        } else {
+            *dst++ = *src++;
+        }
+    }
+    *dst++ = '\0';
+}
 
-  export(movies_fd);
+void urlencode(char* dest, const char* src) {
+    // dest should have a length of strlen(src) * 3 + 1
 
-  lseek(movies_fd, 0, SEEK_SET);
-  offset = lseek(movies_fd, 0, SEEK_END);
-  lseek(movies_fd, 0, SEEK_SET);
+    const char* hex = "0123456789abcdef";
 
-  strcpy(header,
-         "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: ");
-  if ((snprintf(header + strlen(header), BUFFER_SIZE - strlen(header) - 1,
-                "%lu%s", offset, "\r\n\r\n")) < 0) {
-    char msg[] = "Could not construct header!";
-    write(STDERR_FILENO, msg, sizeof(msg));
-    pthread_exit((void*)1);
-  }
+    int pos = 0;
+    for(int i = 0; i < strlen(src); i++) {
+        if(('a' <= src[i] && src[i] <= 'z') ||
+           ('A' <= src[i] && src[i] <= 'Z') ||
+           ('0' <= src[i] && src[i] <= '9')) {
+            dest[pos++] = src[i];
+        } else {
+            dest[pos++] = '%';
+            dest[pos++] = hex[src[i] >> 4];
+            dest[pos++] = hex[src[i] & 15];
+        }
+    }
+    dest[pos] = '\0';
+}
 
-  while (read(movies_fd, buffer, BUFFER_SIZE) > 0) {
-    write(movies_fd, buffer, strlen(buffer));
-    printf("%s", buffer);
-  }
-  close(movies_fd);
+void makeabsolute(char* dest, const char* src) {
+    // Initialize destination with first token
+    const char* start = src;
+    const char* end = strchr(start, '/');
+    size_t len = end ? (size_t) (end - start) : strlen(start);
 
-  close(client_fd);
-  pthread_exit(NULL);
+    strncpy(dest, start, len);
+    dest[len] = '\0';
+
+    // Process remaining tokens
+    while(end != NULL) {
+        start = end + 1;    // Skip '/'
+        end = strchr(start, '/');
+        len = end ? (size_t) (end - start) : strlen(start);
+
+        char token[BUFFER_SIZE];
+        strncpy(token, start, len);
+        token[len] = '\0';
+
+        // Skip "." and handle ".."
+        if(strcmp(token, ".") == 0 || strcmp(token, "..") == 0) {
+            continue;    // Skip current directory (.)
+        } else {
+            // Append new segment
+            strcat(dest, "/");
+            strcat(dest, token);
+        }
+    }
 }
