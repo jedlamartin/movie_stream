@@ -8,3 +8,6 @@ cmake_install.cmake
 movie_stream
 CMakeFiles/*
 index.html
+/.vs/*
+/out/*
+/CMakeSettings.json

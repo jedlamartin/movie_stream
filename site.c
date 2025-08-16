@@ -3,7 +3,9 @@
 const char error_response[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Type: text/plain\r\n"
+    "Connection: close\r\n"
     "\r\n";
+
 
 void urldecode(char* dst, const char* src);
 void urlencode(char* dest, const char* src);
@@ -79,13 +81,12 @@ void* thread_fn(void* arg) {
     if (S_ISREG(stat.st_mode)) {
       char resp[BUFFER_SIZE] =
           "HTTP/1.1 200 OK\r\n"
-          "Content-type: text/plain\r\n"
-          "\r\n";
+          "Content-type: ";
 
       char content_type[256];
       getcontenttype(content_type, header.path);
       strcat(resp, content_type);
-      strcat(resp, "\r\n\r\n");
+      strcat(resp, "\r\nConnection: close\r\n\r\n");
       write(client_fd, resp, strlen(resp));
       while ((read_bytes = read(file_fd, buffer, BUFFER_SIZE)) > 0) {
         write(client_fd, buffer, read_bytes);
@@ -94,6 +95,7 @@ void* thread_fn(void* arg) {
       const char resp[] =
           "HTTP/1.1 200 OK\r\n"
           "Content-Type: text/html\r\n"
+          "Connection: close\r\n"
           "\r\n"
           "<h1>Directory Listing</h1>"
           "Directory: ";
@@ -103,16 +105,15 @@ void* thread_fn(void* arg) {
       const char list_begin[] = "<hr><ul>";
       write(client_fd, list_begin, strlen(list_begin));
 
-      const char entry_begin[] = "<li><a href=";
+      const char entry_begin[] = "<li><a href=\"/";
+	  const char entry_mid[] = "\">";
       const char entry_end[] = "</a></li>";
       DIR* dir = opendir(header.path);
       struct dirent* dirent = NULL;
       char path[PATH_MAX];
-      char encoded[PATH_MAX * 3];
       while ((dirent = readdir(dir)) != NULL) {
         if (strcmp(dirent->d_name, ".") != 0 &&
             strcmp(dirent->d_name, "..") != 0) {
-          write(client_fd, entry_begin, strlen(entry_begin));
 
           if (strcmp(header.path, ".") != 0) {
             strcpy(path, header.path);
@@ -121,15 +122,15 @@ void* thread_fn(void* arg) {
           } else {
             strcpy(path, dirent->d_name);
           }
-          // printf("\n\nBefore: %s\n\n", path);
 
+          char encoded[PATH_MAX * 3];
           urlencode(encoded, path);
 
-          // printf("\n\nAfter: %s\n\n", encoded);
+          write(client_fd, entry_begin, strlen(entry_begin));
 
           write(client_fd, encoded, strlen(encoded));
 
-          write(client_fd, ">", sizeof(char));
+          write(client_fd, entry_mid, strlen(entry_mid));
           write(client_fd, dirent->d_name, strlen(dirent->d_name));
           write(client_fd, entry_end, strlen(entry_end));
         }
@@ -142,6 +143,8 @@ void* thread_fn(void* arg) {
 
     close(file_fd);
   }
+
+
 
   close(client_fd);
   pthread_exit(NULL);
@@ -175,22 +178,25 @@ void urldecode(char* dst, const char* src) {
 }
 
 void urlencode(char* dest, const char* src) {
-  // dest should have a length of strlen(src) * 3 + 1
+    const char* hex = "0123456789abcdef";
+    int pos = 0;
 
-  const char* hex = "0123456789abcdef";
-
-  int pos = 0;
-  for (int i = 0; i < strlen(src); i++) {
-    if (('a' <= src[i] && src[i] <= 'z') || ('A' <= src[i] && src[i] <= 'Z') ||
-        ('0' <= src[i] && src[i] <= '9')) {
-      dest[pos++] = src[i];
-    } else {
-      dest[pos++] = '%';
-      dest[pos++] = hex[src[i] >> 4];
-      dest[pos++] = hex[src[i] & 15];
+    for (int i = 0; i < strlen(src); i++) {
+        unsigned char c = src[i];
+        if (('a' <= c && c <= 'z') ||
+            ('A' <= c && c <= 'Z') ||
+            ('0' <= c && c <= '9') ||
+            c == '/' || c == '-' || c == '_' || c == '.' || c == '~') {
+            // Leave safe characters as-is
+            dest[pos++] = c;
+        }
+        else {
+            dest[pos++] = '%';
+            dest[pos++] = hex[c >> 4];
+            dest[pos++] = hex[c & 15];
+        }
     }
-  }
-  dest[pos] = '\0';
+    dest[pos] = '\0';
 }
 
 void makeabsolute(char* dest, const char* src) {
@@ -224,17 +230,24 @@ void makeabsolute(char* dest, const char* src) {
 }
 
 void getcontenttype(char* dest, const char* filename) {
+
+    
+    if (!strrchr(filename, '.')) {
+        strcpy(dest, "application/octet-stream");
+        return;
+    }
+
   if (strcmp(strrchr(filename, '.'), ".html") == 0 ||
       strcmp(strrchr(filename, '.'), ".htm") == 0) {
-    strcpy(dest, "tetx/html");
+    strcpy(dest, "text/html");
   } else if (strcmp(strrchr(filename, '.'), ".css") == 0) {
-    strcpy(dest, "tetx/css");
+    strcpy(dest, "text/css");
   } else if (strcmp(strrchr(filename, '.'), ".js") == 0) {
     strcpy(dest, "application/javascript");
   } else if (strcmp(strrchr(filename, '.'), ".json") == 0) {
     strcpy(dest, "application/json");
   } else if (strcmp(strrchr(filename, '.'), ".txt") == 0) {
-    strcpy(dest, "tetx/plain");
+    strcpy(dest, "text/plain");
   } else if (strcmp(strrchr(filename, '.'), ".png") == 0) {
     strcpy(dest, "image/png");
   } else if (strcmp(strrchr(filename, '.'), ".jpg") == 0 ||
