@@ -17,8 +17,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 #include "export.h"
+#include "list.h"
 
 typedef struct Header {
   char version[BUFFER_SIZE];

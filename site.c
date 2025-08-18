@@ -16,140 +16,177 @@ void* thread_fn(void* arg) {
   int client_fd = *((int*)arg);
   free(arg);
 
-  char buffer[BUFFER_SIZE];
-  memset(buffer, 0, BUFFER_SIZE);
+  bool keep_alive = true;
 
-  ssize_t read_bytes = read(client_fd, buffer, BUFFER_SIZE - 1);
-  if (read_bytes > 0) {
-    buffer[read_bytes] = '\0';
-    printf("Request:\n%s\n", buffer);  // debug log
-  }
-  else {
-      close(client_fd);
-      pthread_exit((void*)1);
-  }
+  while (keep_alive) {
+      char buffer[BUFFER_SIZE];
+      memset(buffer, 0, BUFFER_SIZE);
 
-  // Parsing the header
-  Header header;
-  char* token = strtok(buffer, " \r\n");
-  strcpy(header.method, token);
-  token = strtok(NULL, " \r\n");
-  // Decode the url
-  char* query = strchr(token, '?');
-  char tmp[BUFFER_SIZE];
-  query ? strncpy(header.path, token, query - token)
-        : strcpy(header.path, token);
-  urldecode(tmp, header.path);
-  makeabsolute(header.path, tmp);
-  token = strtok(NULL, " \r\n");
-  strcpy(header.version, token);
-
-  printf("Method:%s\n", header.method);
-  printf("Path:%s\n", header.path);
-  printf("Version:%s\n", header.version);
-
-  if (strcmp(header.version, "HTTP/1.1") != 0) {
-    fprintf(stderr, "Unsupported HTTP version!");
-    write(client_fd, error_response, strlen(error_response));
-    close(client_fd);
-    pthread_exit((void*)1);
-  }
-
-  if (strcmp(header.method, "GET") != 0) {
-    fprintf(stderr, "Unsupported HTTP method!");
-    write(client_fd, error_response, strlen(error_response));
-    close(client_fd);
-    pthread_exit((void*)1);
-  }
-  if (header.path[0] != '/') {
-    fprintf(stderr, "The path must be absolute!");
-    write(client_fd, error_response, strlen(error_response));
-    close(client_fd);
-    pthread_exit((void*)1);
-  }
-  memmove(header.path, header.path + 1, strlen(header.path));
-
-  if (strcmp(header.path, "") == 0) {
-    strcpy(header.path, ".");
-  }
-
-  int file_fd = -1;
-  if ((file_fd = open(header.path, O_RDONLY)) < 0) {
-    const char resp[] =
-        "HTTP/1.1 404 Not Found\r\n"
-        "\r\n";
-    write(client_fd, resp, strlen(resp));
-  } else {
-    struct stat stat;
-    fstat(file_fd, &stat);
-    if (S_ISREG(stat.st_mode)) {
-      char resp[BUFFER_SIZE] =
-          "HTTP/1.1 200 OK\r\n"
-          "Content-type: ";
-
-      char content_type[256];
-      getcontenttype(content_type, header.path);
-      strcat(resp, content_type);
-      strcat(resp, "\r\nConnection: close\r\n\r\n");
-      write(client_fd, resp, strlen(resp));
-      while ((read_bytes = read(file_fd, buffer, BUFFER_SIZE)) > 0) {
-        write(client_fd, buffer, read_bytes);
+      ssize_t read_bytes = read(client_fd, buffer, BUFFER_SIZE - 1);
+      if (read_bytes > 0) {
+          buffer[read_bytes] = '\0';
+          printf("Request:\n%s\n", buffer);  // debug log
       }
-    } else if (S_ISDIR(stat.st_mode)) {
-      const char resp[] =
-          "HTTP/1.1 200 OK\r\n"
-          "Content-Type: text/html\r\n"
-          "Connection: close\r\n"
-          "\r\n"
-          "<h1>Directory Listing</h1>"
-          "Directory: ";
-      write(client_fd, resp, strlen(resp));
-      write(client_fd, header.path, strlen(header.path));
+      else {
+          close(client_fd);
+          pthread_exit((void*)1);
+      }
 
-      const char list_begin[] = "<hr><ul>";
-      write(client_fd, list_begin, strlen(list_begin));
+      // Parsing the header
+      Header header;
+	  char* save_ptr;
+      char* token = strtok_r(buffer, " \r\n", &save_ptr);
+      if (!token) {
+		  fprintf(stderr, "Invalid request format!");
+          pthread_exit((void*)1);
+      }
+      strncpy(header.method, token, sizeof(header.method)-1);
+	  header.method[sizeof(header.method) - 1] = '\0'; // Ensure null termination
+      token = strtok_r(NULL, " \r\n", &save_ptr);
+      if (!token) {
+          fprintf(stderr, "Invalid request format!");
+          pthread_exit((void*)1);
+      }
+      // Decode the url
+      char* query = strchr(token, '?');
+      char tmp[BUFFER_SIZE];
+      query ? strncpy(header.path, token, query - token)
+          : strncpy(header.path, token, sizeof(header.path) - 1);
+	  header.path[sizeof(header.path) - 1] = '\0'; // Ensure null termination
+      urldecode(tmp, header.path);
+      makeabsolute(header.path, tmp);
+      token = strtok_r(NULL, " \r\n", save_ptr);
+      if (!token) {
+          fprintf(stderr, "Invalid request format!");
+          pthread_exit((void*)1);
+      }
+      strcpy(header.version, token);
 
-      const char entry_begin[] = "<li><a href=\"/";
-	  const char entry_mid[] = "\">";
-      const char entry_end[] = "</a></li>";
-      DIR* dir = opendir(header.path);
-      struct dirent* dirent = NULL;
-      char path[PATH_MAX];
-      while ((dirent = readdir(dir)) != NULL) {
-        if (strcmp(dirent->d_name, ".") != 0 &&
-            strcmp(dirent->d_name, "..") != 0) {
+      char* content_type = strtok_r(NULL, ": \r\n", save_ptr);
+      char* content = strtok_r(NULL, ": \r\n", save_ptr);
+      List* list = create_list(content_type, content);
 
-          if (strcmp(header.path, ".") != 0) {
-            strcpy(path, header.path);
-            strcat(path, "/");
-            strcat(path, dirent->d_name);
-          } else {
-            strcpy(path, dirent->d_name);
+      while (content != NULL && content_type != NULL) {
+          if(strcmp(content_type, "Connection") == 0 && strcmp(content, "closed") == 0) {
+              keep_alive = false;
+          }
+          content_type = strtok_r(NULL, ": \r\n", save_ptr);
+          content = strtok_r(NULL, ": \r\n", save_ptr);
+          if (content_type != NULL && content != NULL) {
+              append_list(list, content_type, content);
+          }
+      }
+
+      printf("Method:%s\n", header.method);
+      printf("Path:%s\n", header.path);
+      printf("Version:%s\n", header.version);
+
+      if (strcmp(header.version, "HTTP/1.1") != 0) {
+          fprintf(stderr, "Unsupported HTTP version!");
+          write(client_fd, error_response, strlen(error_response));
+          close(client_fd);
+          pthread_exit((void*)1);
+      }
+
+      if (strcmp(header.method, "GET") != 0) {
+          fprintf(stderr, "Unsupported HTTP method!");
+          write(client_fd, error_response, strlen(error_response));
+          close(client_fd);
+          pthread_exit((void*)1);
+      }
+      if (header.path[0] != '/') {
+          fprintf(stderr, "The path must be absolute!");
+          write(client_fd, error_response, strlen(error_response));
+          close(client_fd);
+          pthread_exit((void*)1);
+      }
+      memmove(header.path, header.path + 1, strlen(header.path));
+
+      if (strcmp(header.path, "") == 0) {
+          strcpy(header.path, ".");
+      }
+
+      int file_fd = -1;
+      if ((file_fd = open(header.path, O_RDONLY)) < 0) {
+          const char resp[] =
+              "HTTP/1.1 404 Not Found\r\n"
+              "\r\n";
+          write(client_fd, resp, strlen(resp));
+      }
+      else {
+          struct stat stat;
+          fstat(file_fd, &stat);
+          if (S_ISREG(stat.st_mode)) {
+              char resp[BUFFER_SIZE] =
+                  "HTTP/1.1 200 OK\r\n"
+                  "Content-type: ";
+
+              char content_type[256];
+              getcontenttype(content_type, header.path);
+              strcat(resp, content_type);
+              strcat(resp, "\r\nConnection: close\r\n\r\n");
+              write(client_fd, resp, strlen(resp));
+              while ((read_bytes = read(file_fd, buffer, BUFFER_SIZE)) > 0) {
+                  write(client_fd, buffer, read_bytes);
+              }
+          }
+          else if (S_ISDIR(stat.st_mode)) {
+              const char resp[] =
+                  "HTTP/1.1 200 OK\r\n"
+                  "Content-Type: text/html\r\n"
+                  "Connection: close\r\n"
+                  "\r\n"
+                  "<h1>Directory Listing</h1>"
+                  "Directory: ";
+              write(client_fd, resp, strlen(resp));
+              write(client_fd, header.path, strlen(header.path));
+
+              const char list_begin[] = "<hr><ul>";
+              write(client_fd, list_begin, strlen(list_begin));
+
+              const char entry_begin[] = "<li><a href=\"/";
+              const char entry_mid[] = "\">";
+              const char entry_end[] = "</a></li>";
+              DIR* dir = opendir(header.path);
+              struct dirent* dirent = NULL;
+              char path[PATH_MAX];
+              while ((dirent = readdir(dir)) != NULL) {
+                  if (strcmp(dirent->d_name, ".") != 0 &&
+                      strcmp(dirent->d_name, "..") != 0) {
+
+                      if (strcmp(header.path, ".") != 0) {
+                          strcpy(path, header.path);
+                          strcat(path, "/");
+                          strcat(path, dirent->d_name);
+                      }
+                      else {
+                          strcpy(path, dirent->d_name);
+                      }
+
+                      char encoded[PATH_MAX * 3];
+                      urlencode(encoded, path);
+
+                      write(client_fd, entry_begin, strlen(entry_begin));
+
+                      write(client_fd, encoded, strlen(encoded));
+
+                      write(client_fd, entry_mid, strlen(entry_mid));
+                      write(client_fd, dirent->d_name, strlen(dirent->d_name));
+                      write(client_fd, entry_end, strlen(entry_end));
+                  }
+              };
+              closedir(dir);
+
+              const char list_end[] = "</ul><hr>";
+              write(client_fd, list_end, strlen(list_end));
           }
 
-          char encoded[PATH_MAX * 3];
-          urlencode(encoded, path);
-
-          write(client_fd, entry_begin, strlen(entry_begin));
-
-          write(client_fd, encoded, strlen(encoded));
-
-          write(client_fd, entry_mid, strlen(entry_mid));
-          write(client_fd, dirent->d_name, strlen(dirent->d_name));
-          write(client_fd, entry_end, strlen(entry_end));
-        }
-      };
-      closedir(dir);
-
-      const char list_end[] = "</ul><hr>";
-      write(client_fd, list_end, strlen(list_end));
-    }
-
-    close(file_fd);
+          close(file_fd);
+      }
+	  // Free the linked list
+	  free_list(list);
   }
-
-
-
+  
   close(client_fd);
   pthread_exit(NULL);
 }
