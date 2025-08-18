@@ -124,7 +124,7 @@ void* thread_fn(void* arg) {
               char content_type[256];
               getcontenttype(content_type, header.path);
               strcat(resp, content_type);
-              strcat(resp, "\r\nConnection: close\r\n\r\n");
+              strcat(resp, "\r\n\r\n");
               write(client_fd, resp, strlen(resp));
               while ((read_bytes = read(file_fd, buffer, BUFFER_SIZE)) > 0) {
                   write(client_fd, buffer, read_bytes);
@@ -134,7 +134,6 @@ void* thread_fn(void* arg) {
               const char resp[] =
                   "HTTP/1.1 200 OK\r\n"
                   "Content-Type: text/html\r\n"
-                  "Connection: close\r\n"
                   "\r\n"
                   "<h1>Directory Listing</h1>"
                   "Directory: ";
