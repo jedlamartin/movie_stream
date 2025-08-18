@@ -1,7 +1,7 @@
 #include "site.h"
 
 const char error_response[] =
-    "HTTP/1.1 200 OK\r\n"
+    "HTTP/1.1 400 Bad Request\r\n"
     "Content-Type: text/plain\r\n"
     "Connection: close\r\n"
     "\r\n";
@@ -23,6 +23,10 @@ void* thread_fn(void* arg) {
   if (read_bytes > 0) {
     buffer[read_bytes] = '\0';
     printf("Request:\n%s\n", buffer);  // debug log
+  }
+  else {
+      close(client_fd);
+      pthread_exit((void*)1);
   }
 
   // Parsing the header
