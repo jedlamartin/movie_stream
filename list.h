@@ -3,8 +3,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
-typedef struct {
+typedef struct List {
 	char* content_type;
 	char* content;
 	struct List* next;
