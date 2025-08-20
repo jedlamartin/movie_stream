@@ -307,48 +307,49 @@ void makeabsolute(char* dest, const char* src) {
 
 void getcontenttype(char* dest, const char* filename) {
 
+	char* index;
 
-	if (!strrchr(filename, '.')) {
+	if (!(index=strrchr(filename, '.'))) {
 		strcpy(dest, "application/octet-stream");
 		return;
 	}
 
-	if (strcmp(strrchr(filename, '.'), ".html") == 0 ||
-		strcmp(strrchr(filename, '.'), ".htm") == 0) {
+	if (strcmp(index, ".html") == 0 ||
+		strcmp(index, ".htm") == 0) {
 		strcpy(dest, "text/html");
 	}
-	else if (strcmp(strrchr(filename, '.'), ".css") == 0) {
+	else if (strcmp(index, ".css") == 0) {
 		strcpy(dest, "text/css");
 	}
-	else if (strcmp(strrchr(filename, '.'), ".js") == 0) {
+	else if (strcmp(index, ".js") == 0) {
 		strcpy(dest, "application/javascript");
 	}
-	else if (strcmp(strrchr(filename, '.'), ".json") == 0) {
+	else if (strcmp(index, ".json") == 0) {
 		strcpy(dest, "application/json");
 	}
-	else if (strcmp(strrchr(filename, '.'), ".txt") == 0) {
+	else if (strcmp(index, ".txt") == 0) {
 		strcpy(dest, "text/plain");
 	}
-	else if (strcmp(strrchr(filename, '.'), ".png") == 0) {
+	else if (strcmp(index, ".png") == 0) {
 		strcpy(dest, "image/png");
 	}
-	else if (strcmp(strrchr(filename, '.'), ".jpg") == 0 ||
-		strcmp(strrchr(filename, '.'), ".jpeg") == 0) {
+	else if (strcmp(index, ".jpg") == 0 ||
+		strcmp(index, ".jpeg") == 0) {
 		strcpy(dest, "image/jpeg");
 	}
-	else if (strcmp(strrchr(filename, '.'), ".gif") == 0) {
+	else if (strcmp(index, ".gif") == 0) {
 		strcpy(dest, "image/gif");
 	}
-	else if (strcmp(strrchr(filename, '.'), ".svg") == 0) {
+	else if (strcmp(index, ".svg") == 0) {
 		strcpy(dest, "image/svg+xml");
 	}
-	else if (strcmp(strrchr(filename, '.'), ".ico") == 0) {
+	else if (strcmp(index, ".ico") == 0) {
 		strcpy(dest, "image/x-icon");
 	}
-	else if (strcmp(strrchr(filename, '.'), ".pdf") == 0) {
+	else if (strcmp(index, ".pdf") == 0) {
 		strcpy(dest, "application/pdf");
 	}
-	else if (strcmp(strrchr(filename, '.'), ".zip") == 0) {
+	else if (strcmp(index, ".zip") == 0) {
 		strcpy(dest, "application/zip");
 	}
 	else {
