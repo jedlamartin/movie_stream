@@ -2,6 +2,7 @@
 #define LIST_H
 
 #include <stdio.h>
+#include <stdlib.h>
 
 typedef struct {
 	char* content_type;
