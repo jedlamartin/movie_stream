@@ -12,6 +12,7 @@ void urlencode(char* dest, const char* src);
 void makeabsolute(char* dest, const char* src);
 void getcontenttype(char* dest, const char* filename);
 int getcontentrange(char* content, off_t* start, off_t* end);
+void normalizeranges(off_t* start, off_t* end, const off_t file_size);
 
 void* thread_fn(void* arg) {
 	int client_fd = *((int*)arg);
@@ -173,38 +174,32 @@ void* thread_fn(void* arg) {
 					strcat(resp, "Content-Range: bytes ");
 					char content_start[32];
 					char content_end[32];
-					if (header.range_start != (off_t) -1) {
-						snprintf(content_start, sizeof(content_start), "%jd", (intmax_t)header.range_start);
-						if (header.range_end != (off_t) -1) {
-							snprintf(content_end, sizeof(content_end), "%jd", (intmax_t)header.range_end);
-						}
-						else {
-							snprintf(content_end, sizeof(content_end), "%jd", (intmax_t)(st.st_size - 1));
-						}
-					}
-					else if (header.range_end != (off_t) -1) {
-						snprintf(content_start, sizeof(content_start), "%jd", (intmax_t)(st.st_size - header.range_end));
-						snprintf(content_end, sizeof(content_end), "%jd", (intmax_t)(st.st_size - 1));
-					}
-					else {
-						snprintf(content_start, sizeof(content_start), "%jd", (intmax_t)0);
-						snprintf(content_end, sizeof(content_end), "%jd", (intmax_t)(st.st_size - 1));
-					}
+
+					normalizeranges(&header.range_start, &header.range_end, st.st_size);
+
+					snprintf(content_end, sizeof(content_end), "%jd", (intmax_t)header.range_end);
+					snprintf(content_start, sizeof(content_start), "%jd", (intmax_t)header.range_start);
 
 					strcat(resp, content_start);
 					strcat(resp, "-");
 					strcat(resp, content_end);
 					strcat(resp, "/");
-					char content_size[20];
-					sprintf(content_size, "%ld", st.st_size);
+					char content_size[32];
+					snprintf(content_size,sizeof(content_size), "%jd", (intmax_t)st.st_size);
 					strcat(resp, content_size);
 					strcat(resp, "\r\n");
 
-					content_length = header.range_end != -1 ? header.range_end - header.range_start + 1 : st.st_size - header.range_start;
+					content_length = header.range_end - header.range_start + 1;
 
 					strcat(resp, "Connection: ");
 
-					lseek(file_fd, header.range_start, SEEK_SET);
+					if (lseek(file_fd, header.range_start, SEEK_SET) == (off_t)-1) {
+						fprintf(stderr, "lseek failed");
+						free_list(header.headers);
+						close(file_fd);
+						close(client_fd);
+						pthread_exit((void*)1);
+					}
 				}
 				else {
 					strcat(resp, "HTTP/1.1 200 OK\r\n"
@@ -212,13 +207,12 @@ void* thread_fn(void* arg) {
 
 					content_length = st.st_size;
 				}
-				printf("start: %zu, end: %zu, content length: %zu\n", header.range_start, header.range_end, content_length);
 
 				header.keep_alive ? strcat(resp, "keep-alive\r\n") : strcat(resp, "close\r\n");
 
 				strcat(resp, "Content-Length: ");
-				char content_length_str[20];
-				sprintf(content_length_str, "%ld", content_length);
+				char content_length_str[32];
+				snprintf(content_length_str,sizeof(content_length_str), "%jd", (intmax_t)content_length);
 				strcat(resp, content_length_str);
 				strcat(resp, "\r\n");
 
@@ -457,7 +451,7 @@ void getcontenttype(char* dest, const char* filename) {
 	else if (strcmp(index, ".zip") == 0) {
 		strcpy(dest, "application/zip");
 	}
-	if (strcmp(index, ".mkv") == 0 ||
+	else if (strcmp(index, ".mkv") == 0 ||
 		strcmp(index, ".mov") == 0 ||
 		strcmp(index, ".avi") == 0 ||
 		strcmp(index, ".flv") == 0 ||
@@ -467,9 +461,6 @@ void getcontenttype(char* dest, const char* filename) {
 	}
 	else if (strcmp(index, ".mp4") == 0) {
 		strcpy(dest, "video/mp4");
-	}
-	else if (strcmp(index, ".mov") == 0) {
-		strcpy(dest, "video/quicktime");
 	}
 	else if (strcmp(index, ".m4v") == 0) {
 		strcpy(dest, "video/x-m4v");
@@ -541,3 +532,22 @@ int getcontentrange(char* content, off_t* start, off_t* end) {
 
 	return 0;
 }
+
+void normalizeranges(off_t* start, off_t* end, const off_t file_size) {
+	if (!start || !end) return;
+
+	if (*start == -1 && *end > 0) {
+		// suffix form: "-N"
+		*start = file_size - *end;
+		*end = file_size - 1;
+	}
+	else if (*end == -1) {
+		// open-ended range: "X-"
+		*end = file_size - 1;
+	}
+
+	// Clamp values to file size
+	if (*start < 0) *start = 0;
+	if (*end >= file_size) *end = file_size - 1;
+}
+

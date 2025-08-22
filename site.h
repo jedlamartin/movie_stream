@@ -3,7 +3,7 @@
 
 #define PORT 8080
 #define MAX_CONNECTIONS 5
-#define BUFFER_SIZE 8192
+#define BUFFER_SIZE 65536
 #define BODY_MAX_SIZE 1048576 // 1 MB
 
 #include <ctype.h>
