@@ -152,7 +152,10 @@ void* thread_fn(void* arg) {
 
 				write(client_fd, resp, strlen(resp));
 				while ((read_bytes = read(file_fd, buffer, BUFFER_SIZE)) > 0) {
-					write(client_fd, buffer, read_bytes);
+					if (write(client_fd, buffer, read_bytes) != read_bytes) {
+						fprintf(stderr, "Failed to send file completely!\n");
+						break;
+					}
 				}
 			}
 			else if (S_ISDIR(st.st_mode)) {
