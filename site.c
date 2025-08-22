@@ -23,8 +23,8 @@ void* thread_fn(void* arg) {
 	.path = "",
 	.keep_alive = true,
 	.range_request = false,
-	.range_start = 0,
-	.range_end = 0,
+	.range_start = -1,
+	.range_end = -1,
 	.headers = NULL,
 	};
 
@@ -171,12 +171,28 @@ void* thread_fn(void* arg) {
 					strcat(resp, "HTTP/1.1 206 Partial Content\r\n");
 
 					strcat(resp, "Content-Range: bytes ");
-					char content_start[20];
-					sprintf(content_start, "%ld", header.range_start);
+					char content_start[32];
+					char content_end[32];
+					if (header.range_start != -1) {
+						snprintf(content_start, sizeof(content_start), "%jd", (intmax_t)header.range_start);
+						if (header.range_end != -1) {
+							snprintf(content_end, sizeof(content_end), "%jd", (intmax_t)header.range_end);
+						}
+						else {
+							snprintf(content_end, sizeof(content_end), "%jd", (intmax_t)(st.st_size - 1));
+						}
+					}
+					else if (header.range_end != -1) {
+						snprintf(content_start, sizeof(content_start), "%jd", (intmax_t)(st.st_size - header.range_end));
+						snprintf(content_end, sizeof(content_end), "%jd", (intmax_t)(st.st_size - 1));
+					}
+					else {
+						snprintf(content_start, sizeof(content_start), "%jd", (intmax_t)0);
+						snprintf(content_end, sizeof(content_end), "%jd", (intmax_t)(st.st_size - 1));
+					}
+
 					strcat(resp, content_start);
 					strcat(resp, "-");
-					char content_end[20];
-					header.range_end != -1 ? snprintf(content_end, sizeof(content_end), "%ld", header.range_end) : snprintf(content_end, sizeof(content_end), "%ld", st.st_size - 1);
 					strcat(resp, content_end);
 					strcat(resp, "/");
 					char content_size[20];
@@ -234,14 +250,14 @@ void* thread_fn(void* arg) {
 				write(client_fd, resp, strlen(resp));
 
 				off_t bytes_remaining = content_length;
-				size_t to_read = bytes_remaining < BUFFER_SIZE ? (size_t) bytes_remaining : BUFFER_SIZE;
+				size_t to_read = bytes_remaining < BUFFER_SIZE ? (size_t)bytes_remaining : BUFFER_SIZE;
 				while ((read_bytes = read(file_fd, buffer, to_read)) > 0 && bytes_remaining > 0) {
 					if (write(client_fd, buffer, read_bytes) != read_bytes) {
 						fprintf(stderr, "Failed to send file completely!\n");
 						break;
 					}
 					bytes_remaining -= read_bytes;
-					to_read = bytes_remaining < BUFFER_SIZE ? (size_t) bytes_remaining : BUFFER_SIZE;
+					to_read = bytes_remaining < BUFFER_SIZE ? (size_t)bytes_remaining : BUFFER_SIZE;
 				}
 			}
 			else if (S_ISDIR(st.st_mode)) {
@@ -446,7 +462,7 @@ void getcontenttype(char* dest, const char* filename) {
 		strcmp(index, ".avi") == 0 ||
 		strcmp(index, ".flv") == 0 ||
 		strcmp(index, "wmv") == 0 ||
-		strcmp(index, ".webm") == 0) {     
+		strcmp(index, ".webm") == 0) {
 		strcpy(dest, "video/webm");
 	}
 	else if (strcmp(index, ".mp4") == 0) {
@@ -476,41 +492,52 @@ void getcontenttype(char* dest, const char* filename) {
 }
 
 int getcontentrange(char* content, off_t* start, off_t* end) {
-	// Example: bytes=500-999
-	char* start_str = NULL;
-	if (!(start_str = strstr(content, "bytes="))) {
+	if (!content || !start || !end) {
 		return -1;
 	}
-	start_str += strlen("bytes=");
+	char* p = NULL;
+	if (!(p = strstr(content, "bytes="))) {
+		return -1;
+	}
+	p += 6;
+
+	char buf[128];
+	strncpy(buf, p, sizeof(buf) - 1);
+	buf[sizeof(buf) - 1] = '\0';
 
 	char* dash_ptr = NULL;
-	long start_val = strtol(start_str, &dash_ptr, 10);
-	if ( *start_str != '-' && (*dash_ptr != '-' || start_val < 0)) {
+
+	if (!(dash_ptr = strchr(buf, '-'))) {
 		return -1;
 	}
+	*dash_ptr = '\0';
 
-	char* end_str = strchr(content, '-')+1;
-	char* end_ptr = NULL;
-	long end_val = strtol(end_str, &end_ptr, 10);
+	char* start_str = buf;
+	char* end_str = dash_ptr + 1;
 
-	if (end_val < 0 || (end_val>0 && end_val < start_val)) {
-		return -1;
-	}
+	char* tmp_ptr = NULL;
 
-	if (*start_str == '-') {
-		// No start specified
-		*start = 0;
+	if (*start_str == '\0') {
+		// suffix form: "-SUFFIX"
+		long long suffix = strtoll(end_str, &tmp_ptr, 10);
+		if (tmp_ptr == end_str || suffix <= 0) return -1;
+		*start = -1;        // sentinel, resolve after fstat
+		*end = (off_t)suffix; // store suffix length temporarily
 	}
 	else {
-		*start = (int)start_val;
+		long long s = strtoll(start_str, &tmp_ptr, 10);
+		if (tmp_ptr == start_str || s < 0) return -1;
+		*start = (off_t)s;
+
+		if (*end_str != '\0') {
+			long long e = strtoll(end_str, &tmp_ptr, 10);
+			if (tmp_ptr == end_str || e < 0 || e < s) return -1;
+			*end = (off_t)e;
+		}
+		else {
+			*end = -1; // open-ended: until EOF
+		}
 	}
 
-	if (end_str == end_ptr) {
-		// No end specified
-		*end = -1;
-	}
-	else {
-		*end = (int)end_val;
-	}
 	return 0;
 }

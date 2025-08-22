@@ -19,6 +19,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <inttypes.h>
 
 #include "export.h"
 #include "list.h"
