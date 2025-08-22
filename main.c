@@ -13,6 +13,9 @@
 #include "site.h"
 
 int main(int argc, char* argv[]) {
+	(void)argc;    // Silence unused parameter warning
+	(void)argv;    // Silence unused parameter warning
+
 	int socket_fd = -1;
 	if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
 		char msg[] = "Could not create socket!";

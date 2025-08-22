@@ -29,8 +29,8 @@ typedef struct Header {
   char path[BUFFER_SIZE];
   bool keep_alive;
   bool range_request;
-  int range_start;
-  int range_end;
+  off_t range_start;
+  off_t range_end;
   List* headers;
 } Header;
 

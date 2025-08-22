@@ -11,7 +11,7 @@ void urldecode(char* dst, const char* src);
 void urlencode(char* dest, const char* src);
 void makeabsolute(char* dest, const char* src);
 void getcontenttype(char* dest, const char* filename);
-int getcontentrange(char* content, int* start, int* end);
+int getcontentrange(char* content, off_t* start, off_t* end);
 
 void* thread_fn(void* arg) {
 	int client_fd = *((int*)arg);
@@ -165,7 +165,7 @@ void* thread_fn(void* arg) {
 			if (S_ISREG(st.st_mode)) {
 				char resp[BUFFER_SIZE];
 				resp[0] = '\0';
-				size_t content_length;
+				off_t content_length;
 
 				if (header.range_request) {
 					strcat(resp, "HTTP/1.1 206 Partial Content\r\n");
@@ -176,7 +176,7 @@ void* thread_fn(void* arg) {
 					strcat(resp, content_start);
 					strcat(resp, "-");
 					char content_end[20];
-					header.range_end != -1 ? sprintf(content_end, "%ld", header.range_end) : sprintf(content_end, "%ld", st.st_size - 1);
+					header.range_end != -1 ? snprintf(content_end, sizeof(content_end), "%ld", header.range_end) : snprintf(content_end, sizeof(content_end), "%ld", st.st_size - 1);
 					strcat(resp, content_end);
 					strcat(resp, "/");
 					char content_size[20];
@@ -184,11 +184,11 @@ void* thread_fn(void* arg) {
 					strcat(resp, content_size);
 					strcat(resp, "\r\n");
 
-					content_length = header.range_end != -1 ? header.range_end - header.range_start + 1 : (size_t)((off_t)st.st_size - (off_t)header.range_start);
+					content_length = header.range_end != -1 ? header.range_end - header.range_start + 1 : st.st_size - header.range_start;
 
 					strcat(resp, "Connection: ");
 
-					lseek(file_fd, (off_t) header.range_start, SEEK_SET);
+					lseek(file_fd, header.range_start, SEEK_SET);
 				}
 				else {
 					strcat(resp, "HTTP/1.1 200 OK\r\n"
@@ -345,7 +345,7 @@ void urlencode(char* dest, const char* src) {
 	const char* hex = "0123456789abcdef";
 	int pos = 0;
 
-	for (int i = 0; i < strlen(src); i++) {
+	for (size_t i = 0; i < strlen(src); i++) {
 		unsigned char c = src[i];
 		if (('a' <= c && c <= 'z') ||
 			('A' <= c && c <= 'Z') ||
@@ -475,7 +475,7 @@ void getcontenttype(char* dest, const char* filename) {
 	}
 }
 
-int getcontentrange(char* content, int* start, int* end) {
+int getcontentrange(char* content, off_t* start, off_t* end) {
 	// Example: bytes=500-999
 	char* start_str = NULL;
 	if (!(start_str = strstr(content, "bytes="))) {
