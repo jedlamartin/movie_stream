@@ -84,7 +84,7 @@ void* thread_fn(void* arg) {
 		}
 		strcpy(header.version, token);
 
-		char* content_type = strtok_r(NULL, ": \r\n", &save_ptr);
+		char* content_type = strtok_r(NULL, ":", &save_ptr);
 		char* content = strtok_r(NULL, "\r\n", &save_ptr);
 		header.headers = create_list(content_type, content);
 
@@ -97,7 +97,7 @@ void* thread_fn(void* arg) {
 			while (content != NULL && content_type != NULL) {
 				append_list(header.headers, content_type, content);
 
-				if (strcasecmp(content_type, "Connection") == 0 && strcasecmp(content, "closed") == 0) {
+				if (strcasecmp(content_type, "Connection") == 0 && strcasecmp(content, "close") == 0) {
 					header.keep_alive = false;
 				}
 				else if (strcasecmp(content_type, "Range") == 0) {
@@ -163,7 +163,8 @@ void* thread_fn(void* arg) {
 			struct stat st;
 			fstat(file_fd, &st);
 			if (S_ISREG(st.st_mode)) {
-				char resp[BUFFER_SIZE] = "";
+				char resp[BUFFER_SIZE];
+				resp[0] = '\0';
 				size_t content_length;
 
 				if (header.range_request) {
@@ -175,7 +176,7 @@ void* thread_fn(void* arg) {
 					strcat(resp, content_start);
 					strcat(resp, "-");
 					char content_end[20];
-					header.range_end ? sprintf(content_end, "%ld", header.range_end) : sprintf(content_end, "%ld", st.st_size - 1);
+					header.range_end != -1 ? sprintf(content_end, "%ld", header.range_end) : sprintf(content_end, "%ld", st.st_size - 1);
 					strcat(resp, content_end);
 					strcat(resp, "/");
 					char content_size[20];
@@ -183,11 +184,11 @@ void* thread_fn(void* arg) {
 					strcat(resp, content_size);
 					strcat(resp, "\r\n");
 
-					content_length = header.range_end ? header.range_end - header.range_start + 1 : st.st_size - header.range_start;
+					content_length = header.range_end != -1 ? header.range_end - header.range_start + 1 : (size_t)((off_t)st.st_size - (off_t)header.range_start);
 
 					strcat(resp, "Connection: ");
 
-					lseek(file_fd, header.range_start, SEEK_SET);
+					lseek(file_fd, (off_t) header.range_start, SEEK_SET);
 				}
 				else {
 					strcat(resp, "HTTP/1.1 200 OK\r\n"
@@ -195,9 +196,9 @@ void* thread_fn(void* arg) {
 
 					content_length = st.st_size;
 				}
-				printf("start: %ld, end: %ld, content length: %ld", header.range_start, header.range_end, content_length);
+				printf("start: %zu, end: %zu, content length: %zu\n", header.range_start, header.range_end, content_length);
 
-				header.keep_alive ? strcat(resp, "keep-alive\r\n") : strcat(resp, "closed\r\n");
+				header.keep_alive ? strcat(resp, "keep-alive\r\n") : strcat(resp, "close\r\n");
 
 				strcat(resp, "Content-Length: ");
 				char content_length_str[20];
@@ -210,20 +211,37 @@ void* thread_fn(void* arg) {
 				char content_type[256];
 				getcontenttype(content_type, header.path);
 				strcat(resp, content_type);
-				strcat(resp, "\r\n\r\n");
+				strcat(resp, "\r\n");
 
+				strcat(resp, "Accept-Ranges: bytes\r\n");
+
+				// Add proper Content-Disposition for video/audio files
+				if (strstr(content_type, "video/") || strstr(content_type, "audio/")) {
+					strcat(resp, "Content-Disposition: inline; filename=\"");
+					// Extract just the filename from the path
+					const char* filename = strrchr(header.path, '/');
+					if (filename) {
+						strcat(resp, filename + 1); // Skip the '/'
+					}
+					else {
+						strcat(resp, header.path);
+					}
+					strcat(resp, "\"\r\n");
+				}
+
+				strcat(resp, "\r\n");
 
 				write(client_fd, resp, strlen(resp));
 
 				off_t bytes_remaining = content_length;
-				size_t to_read = bytes_remaining < BUFFER_SIZE ? bytes_remaining : BUFFER_SIZE;
+				size_t to_read = bytes_remaining < BUFFER_SIZE ? (size_t) bytes_remaining : BUFFER_SIZE;
 				while ((read_bytes = read(file_fd, buffer, to_read)) > 0 && bytes_remaining > 0) {
 					if (write(client_fd, buffer, read_bytes) != read_bytes) {
 						fprintf(stderr, "Failed to send file completely!\n");
 						break;
 					}
 					bytes_remaining -= read_bytes;
-					to_read = bytes_remaining < BUFFER_SIZE ? bytes_remaining : BUFFER_SIZE;
+					to_read = bytes_remaining < BUFFER_SIZE ? (size_t) bytes_remaining : BUFFER_SIZE;
 				}
 			}
 			else if (S_ISDIR(st.st_mode)) {
@@ -423,6 +441,42 @@ void getcontenttype(char* dest, const char* filename) {
 	else if (strcmp(index, ".zip") == 0) {
 		strcpy(dest, "application/zip");
 	}
+	else if (strcmp(index, ".mkv") == 0) {
+		strcpy(dest, "video/x-matroska");
+	}
+	else if (strcmp(index, ".mp4") == 0) {
+		strcpy(dest, "video/mp4");
+	}
+	else if (strcmp(index, ".webm") == 0) {
+		strcpy(dest, "video/webm");
+	}
+	else if (strcmp(index, ".avi") == 0) {
+		strcpy(dest, "video/x-msvideo");
+	}
+	else if (strcmp(index, ".mov") == 0) {
+		strcpy(dest, "video/quicktime");
+	}
+	else if (strcmp(index, ".m4v") == 0) {
+		strcpy(dest, "video/x-m4v");
+	}
+	else if (strcmp(index, ".flv") == 0) {
+		strcpy(dest, "video/x-flv");
+	}
+	else if (strcmp(index, ".wmv") == 0) {
+		strcpy(dest, "video/x-ms-wmv");
+	}
+	else if (strcmp(index, ".mp3") == 0) {
+		strcpy(dest, "audio/mpeg");
+	}
+	else if (strcmp(index, ".wav") == 0) {
+		strcpy(dest, "audio/wav");
+	}
+	else if (strcmp(index, ".ogg") == 0) {
+		strcpy(dest, "audio/ogg");
+	}
+	else if (strcmp(index, ".m4a") == 0) {
+		strcpy(dest, "audio/mp4");
+	}
 	else {
 		strcpy(dest, "application/octet-stream");
 	}
@@ -460,7 +514,7 @@ int getcontentrange(char* content, size_t* start, size_t* end) {
 
 	if (end_str == end_ptr) {
 		// No end specified
-		*end = 0;
+		*end = -1;
 	}
 	else {
 		*end = (size_t)end_val;
