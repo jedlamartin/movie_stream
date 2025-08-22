@@ -11,7 +11,7 @@ void urldecode(char* dst, const char* src);
 void urlencode(char* dest, const char* src);
 void makeabsolute(char* dest, const char* src);
 void getcontenttype(char* dest, const char* filename);
-int getcontentrange(char* content, size_t* start, size_t* end);
+int getcontentrange(char* content, int* start, int* end);
 
 void* thread_fn(void* arg) {
 	int client_fd = *((int*)arg);
@@ -482,7 +482,7 @@ void getcontenttype(char* dest, const char* filename) {
 	}
 }
 
-int getcontentrange(char* content, size_t* start, size_t* end) {
+int getcontentrange(char* content, int* start, int* end) {
 	// Example: bytes=500-999
 	char* start_str = NULL;
 	if (!(start_str = strstr(content, "bytes="))) {
@@ -509,7 +509,7 @@ int getcontentrange(char* content, size_t* start, size_t* end) {
 		*start = 0;
 	}
 	else {
-		*start = (size_t)start_val;
+		*start = (int)start_val;
 	}
 
 	if (end_str == end_ptr) {
@@ -517,7 +517,7 @@ int getcontentrange(char* content, size_t* start, size_t* end) {
 		*end = -1;
 	}
 	else {
-		*end = (size_t)end_val;
+		*end = (int)end_val;
 	}
 	return 0;
 }
