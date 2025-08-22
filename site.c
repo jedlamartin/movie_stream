@@ -173,16 +173,16 @@ void* thread_fn(void* arg) {
 					strcat(resp, "Content-Range: bytes ");
 					char content_start[32];
 					char content_end[32];
-					if (header.range_start != -1) {
+					if (header.range_start != (off_t) -1) {
 						snprintf(content_start, sizeof(content_start), "%jd", (intmax_t)header.range_start);
-						if (header.range_end != -1) {
+						if (header.range_end != (off_t) -1) {
 							snprintf(content_end, sizeof(content_end), "%jd", (intmax_t)header.range_end);
 						}
 						else {
 							snprintf(content_end, sizeof(content_end), "%jd", (intmax_t)(st.st_size - 1));
 						}
 					}
-					else if (header.range_end != -1) {
+					else if (header.range_end != (off_t) -1) {
 						snprintf(content_start, sizeof(content_start), "%jd", (intmax_t)(st.st_size - header.range_end));
 						snprintf(content_end, sizeof(content_end), "%jd", (intmax_t)(st.st_size - 1));
 					}
