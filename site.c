@@ -441,29 +441,22 @@ void getcontenttype(char* dest, const char* filename) {
 	else if (strcmp(index, ".zip") == 0) {
 		strcpy(dest, "application/zip");
 	}
-	else if (strcmp(index, ".mkv") == 0) {
-		strcpy(dest, "video/x-matroska");
+	if (strcmp(index, ".mkv") == 0 ||
+		strcmp(index, ".mov") == 0 ||
+		strcmp(index, ".avi") == 0 ||
+		strcmp(index, ".flv") == 0 ||
+		strcmp(index, "wmv") == 0 ||
+		strcmp(index, ".webm") == 0) {     
+		strcpy(dest, "video/webm");
 	}
 	else if (strcmp(index, ".mp4") == 0) {
 		strcpy(dest, "video/mp4");
-	}
-	else if (strcmp(index, ".webm") == 0) {
-		strcpy(dest, "video/webm");
-	}
-	else if (strcmp(index, ".avi") == 0) {
-		strcpy(dest, "video/x-msvideo");
 	}
 	else if (strcmp(index, ".mov") == 0) {
 		strcpy(dest, "video/quicktime");
 	}
 	else if (strcmp(index, ".m4v") == 0) {
 		strcpy(dest, "video/x-m4v");
-	}
-	else if (strcmp(index, ".flv") == 0) {
-		strcpy(dest, "video/x-flv");
-	}
-	else if (strcmp(index, ".wmv") == 0) {
-		strcpy(dest, "video/x-ms-wmv");
 	}
 	else if (strcmp(index, ".mp3") == 0) {
 		strcpy(dest, "audio/mpeg");
