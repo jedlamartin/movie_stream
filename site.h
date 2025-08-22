@@ -27,6 +27,11 @@ typedef struct Header {
   char version[BUFFER_SIZE];
   char method[BUFFER_SIZE];
   char path[BUFFER_SIZE];
+  bool keep_alive;
+  bool range_request;
+  size_t range_start;
+  size_t range_end;
+  List* headers;
 } Header;
 
 void* thread_fn(void* arg);

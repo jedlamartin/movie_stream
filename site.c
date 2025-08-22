@@ -11,17 +11,28 @@ void urldecode(char* dst, const char* src);
 void urlencode(char* dest, const char* src);
 void makeabsolute(char* dest, const char* src);
 void getcontenttype(char* dest, const char* filename);
+int getcontentrange(char* content, size_t* start, size_t* end);
 
 void* thread_fn(void* arg) {
 	int client_fd = *((int*)arg);
 	free(arg);
 
-	bool keep_alive = true;
+	Header header = {
+	.version = "",
+	.method = "",
+	.path = "",
+	.keep_alive = true,
+	.range_request = false,
+	.range_start = 0,
+	.range_end = 0,
+	.headers = NULL,
+	};
 
-	while (keep_alive) {
+	while (header.keep_alive) {
 		char buffer[BUFFER_SIZE];
 		ssize_t read_bytes = read(client_fd, buffer, BUFFER_SIZE - 1);
 		if (read_bytes <= 0) {
+			fprintf(stderr, "Could not read from socket!");
 			close(client_fd);
 			pthread_exit((void*)1);
 		}
@@ -30,11 +41,11 @@ void* thread_fn(void* arg) {
 
 
 		// Parsing the header
-		Header header;
+		header.range_request = false;
 
 		if (!strstr(buffer, "\r\n\r\n")) {
-			// header too large or malformed
-			write(client_fd, error_response, sizeof(error_response) - 1);
+			fprintf(stderr, "Header too large or malformed!");
+			write(client_fd, error_response, strlen(error_response));
 			close(client_fd);
 			pthread_exit((void*)1);
 		}
@@ -43,6 +54,8 @@ void* thread_fn(void* arg) {
 		char* token = strtok_r(buffer, " \r\n", &save_ptr);
 		if (!token) {
 			fprintf(stderr, "Invalid request format!");
+			write(client_fd, error_response, strlen(error_response));
+			close(client_fd);
 			pthread_exit((void*)1);
 		}
 		strncpy(header.method, token, sizeof(header.method) - 1);
@@ -50,6 +63,8 @@ void* thread_fn(void* arg) {
 		token = strtok_r(NULL, " \r\n", &save_ptr);
 		if (!token) {
 			fprintf(stderr, "Invalid request format!");
+			write(client_fd, error_response, strlen(error_response));
+			close(client_fd);
 			pthread_exit((void*)1);
 		}
 		// Decode the url
@@ -63,39 +78,53 @@ void* thread_fn(void* arg) {
 		token = strtok_r(NULL, " \r\n", &save_ptr);
 		if (!token) {
 			fprintf(stderr, "Invalid request format!");
+			write(client_fd, error_response, strlen(error_response));
+			close(client_fd);
 			pthread_exit((void*)1);
 		}
 		strcpy(header.version, token);
 
 		char* content_type = strtok_r(NULL, ": \r\n", &save_ptr);
-		char* content = strtok_r(NULL, ": \r\n", &save_ptr);
-		List* list = create_list(content_type, content);
+		char* content = strtok_r(NULL, "\r\n", &save_ptr);
+		header.headers = create_list(content_type, content);
 
 		//printf("Method:%s\n", header.method);
-	//printf("Path:%s\n", header.path);
-	//printf("Version:%s\n", header.version);
+		//printf("Path:%s\n", header.path);
+		//printf("Version:%s\n", header.version);
 
 		if (strcmp(header.version, "HTTP/1.1") == 0) {
 
 			while (content != NULL && content_type != NULL) {
-				if (strcmp(content_type, "Connection") == 0 && strcmp(content, "closed") == 0) {
-					keep_alive = false;
+				append_list(header.headers, content_type, content);
+
+				if (strcasecmp(content_type, "Connection") == 0 && strcasecmp(content, "closed") == 0) {
+					header.keep_alive = false;
+				}
+				else if (strcasecmp(content_type, "Range") == 0) {
+					if (getcontentrange(content, &header.range_start, &header.range_end) == 0) {
+						header.range_request = true;
+					}
+					else {
+						fprintf(stderr, "Invalid range!");
+						write(client_fd, error_response, strlen(error_response));
+						free_list(header.headers);
+						close(client_fd);
+						pthread_exit((void*)1);
+					}
 				}
 				content_type = strtok_r(NULL, ": \r\n", &save_ptr);
-				content = strtok_r(NULL, ": \r\n", &save_ptr);
-				if (content_type != NULL && content != NULL) {
-					append_list(list, content_type, content);
-				}
+				content = strtok_r(NULL, "\r\n", &save_ptr);
+
 			}
 		}
 		else if (strcmp(header.version, "HTTP/1.0") == 0) {
 			// HTTP/1.0 does not support keep-alive by default
-			keep_alive = false;
+			header.keep_alive = false;
 		}
 		else
 		{
 			fprintf(stderr, "Unsupported HTTP version!");
-			free_list(list);
+			free_list(header.headers);
 			write(client_fd, error_response, strlen(error_response));
 			close(client_fd);
 			pthread_exit((void*)1);
@@ -103,14 +132,14 @@ void* thread_fn(void* arg) {
 
 		if (strcmp(header.method, "GET") != 0) {
 			fprintf(stderr, "Unsupported HTTP method!");
-			free_list(list);
+			free_list(header.headers);
 			write(client_fd, error_response, strlen(error_response));
 			close(client_fd);
 			pthread_exit((void*)1);
 		}
 		if (header.path[0] != '/') {
 			fprintf(stderr, "The path must be absolute!");
-			free_list(list);
+			free_list(header.headers);
 			write(client_fd, error_response, strlen(error_response));
 			close(client_fd);
 			pthread_exit((void*)1);
@@ -123,39 +152,78 @@ void* thread_fn(void* arg) {
 
 		int file_fd = -1;
 		if ((file_fd = open(header.path, O_RDONLY)) < 0) {
+			header.keep_alive = false;
 			const char resp[] =
 				"HTTP/1.1 404 Not Found\r\n"
+				"Connection: close\r\n"
 				"\r\n";
-			write(client_fd, resp, strlen(resp));			
+			write(client_fd, resp, sizeof(resp) - 1);
 		}
 		else {
 			struct stat st;
 			fstat(file_fd, &st);
 			if (S_ISREG(st.st_mode)) {
-				char resp[BUFFER_SIZE] =
-					"HTTP/1.1 200 OK\r\n"
-					"Connection: ";
+				char resp[BUFFER_SIZE] = "";
+				size_t content_length;
 
-				keep_alive ? strcat(resp, "keep-alive\r\n") : strcat(resp, "closed\r\n");
+				if (header.range_request) {
+					strcat(resp, "HTTP/1.1 206 Partial Content\r\n");
+
+					strcat(resp, "Content-Range: bytes ");
+					char content_start[20];
+					sprintf(content_start, "%ld", header.range_start);
+					strcat(resp, content_start);
+					strcat(resp, "-");
+					char content_end[20];
+					header.range_end ? sprintf(content_end, "%ld", header.range_end) : sprintf(content_end, "%ld", st.st_size - 1);
+					strcat(resp, content_end);
+					strcat(resp, "/");
+					char content_size[20];
+					sprintf(content_size, "%ld", st.st_size);
+					strcat(resp, content_size);
+					strcat(resp, "\r\n");
+
+					content_length = header.range_end ? header.range_end - header.range_start + 1 : st.st_size - header.range_start;
+
+					strcat(resp, "Connection: ");
+
+					lseek(file_fd, header.range_start, SEEK_SET);
+				}
+				else {
+					strcat(resp, "HTTP/1.1 200 OK\r\n"
+						"Connection: ");
+
+					content_length = st.st_size;
+				}
+				printf("start: %ld, end: %ld, content length: %ld", header.range_start, header.range_end, content_length);
+
+				header.keep_alive ? strcat(resp, "keep-alive\r\n") : strcat(resp, "closed\r\n");
+
+				strcat(resp, "Content-Length: ");
+				char content_length_str[20];
+				sprintf(content_length_str, "%ld", content_length);
+				strcat(resp, content_length_str);
+				strcat(resp, "\r\n");
+
 
 				strcat(resp, "Content-type: ");
 				char content_type[256];
 				getcontenttype(content_type, header.path);
-
 				strcat(resp, content_type);
-				strcat(resp, "\r\n");
+				strcat(resp, "\r\n\r\n");
 
-				strcat(resp, "Content-Length: ");
-				char content_length[20];
-				sprintf(content_length, "%ld\r\n\r\n", st.st_size);
-				strcat(resp, content_length);
 
 				write(client_fd, resp, strlen(resp));
-				while ((read_bytes = read(file_fd, buffer, BUFFER_SIZE)) > 0) {
+
+				off_t bytes_remaining = content_length;
+				size_t to_read = bytes_remaining < BUFFER_SIZE ? bytes_remaining : BUFFER_SIZE;
+				while ((read_bytes = read(file_fd, buffer, to_read)) > 0 && bytes_remaining > 0) {
 					if (write(client_fd, buffer, read_bytes) != read_bytes) {
 						fprintf(stderr, "Failed to send file completely!\n");
 						break;
 					}
+					bytes_remaining -= read_bytes;
+					to_read = bytes_remaining < BUFFER_SIZE ? bytes_remaining : BUFFER_SIZE;
 				}
 			}
 			else if (S_ISDIR(st.st_mode)) {
@@ -219,7 +287,7 @@ void* thread_fn(void* arg) {
 			close(file_fd);
 		}
 		// Free the linked list
-		free_list(list);
+		free_list(header.headers);
 	}
 
 	close(client_fd);
@@ -312,7 +380,7 @@ void getcontenttype(char* dest, const char* filename) {
 
 	char* index;
 
-	if (!(index=strrchr(filename, '.'))) {
+	if (!(index = strrchr(filename, '.'))) {
 		strcpy(dest, "application/octet-stream");
 		return;
 	}
@@ -358,4 +426,44 @@ void getcontenttype(char* dest, const char* filename) {
 	else {
 		strcpy(dest, "application/octet-stream");
 	}
+}
+
+int getcontentrange(char* content, size_t* start, size_t* end) {
+	// Example: bytes=500-999
+	char* start_str = NULL;
+	if (!(start_str = strstr(content, "bytes="))) {
+		return -1;
+	}
+	start_str += strlen("bytes=");
+
+	char* dash_ptr = NULL;
+	long start_val = strtol(start_str, &dash_ptr, 10);
+	if ( *start_str != '-' && (*dash_ptr != '-' || start_val < 0)) {
+		return -1;
+	}
+
+	char* end_str = strchr(content, '-')+1;
+	char* end_ptr = NULL;
+	long end_val = strtol(end_str, &end_ptr, 10);
+
+	if (end_val < 0 || (end_val>0 && end_val < start_val)) {
+		return -1;
+	}
+
+	if (*start_str == '-') {
+		// No start specified
+		*start = 0;
+	}
+	else {
+		*start = (size_t)start_val;
+	}
+
+	if (end_str == end_ptr) {
+		// No end specified
+		*end = 0;
+	}
+	else {
+		*end = (size_t)end_val;
+	}
+	return 0;
 }
