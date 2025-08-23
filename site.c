@@ -225,20 +225,6 @@ void* thread_fn(void* arg) {
 
 				strcat(resp, "Accept-Ranges: bytes\r\n");
 
-				// Add proper Content-Disposition for video/audio files
-				if (strstr(content_type, "video/") || strstr(content_type, "audio/")) {
-					strcat(resp, "Content-Disposition: inline; filename=\"");
-					// Extract just the filename from the path
-					const char* filename = strrchr(header.path, '/');
-					if (filename) {
-						strcat(resp, filename + 1); // Skip the '/'
-					}
-					else {
-						strcat(resp, header.path);
-					}
-					strcat(resp, "\"\r\n");
-				}
-
 				strcat(resp, "\r\n");
 
 				write(client_fd, resp, strlen(resp));
@@ -246,7 +232,11 @@ void* thread_fn(void* arg) {
 				off_t bytes_remaining = content_length;
 				size_t to_read = bytes_remaining < BUFFER_SIZE ? (size_t)bytes_remaining : BUFFER_SIZE;
 				while ((read_bytes = read(file_fd, buffer, to_read)) > 0 && bytes_remaining > 0) {
-					if (write(client_fd, buffer, read_bytes) != read_bytes) {
+					if(read_bytes<0){
+						fprintf(stderr, "Failed to read file!\n");
+						break;
+					}
+					else if (write(client_fd, buffer, read_bytes) != read_bytes) {
 						fprintf(stderr, "Failed to send file completely!\n");
 						break;
 					}
@@ -273,6 +263,7 @@ void* thread_fn(void* arg) {
 				DIR* dir = opendir(header.path);
 				struct dirent* dirent = NULL;
 				char path[PATH_MAX];
+				bool contains_index = false;
 				while ((dirent = readdir(dir)) != NULL) {
 					if (strcmp(dirent->d_name, ".") != 0 &&
 						strcmp(dirent->d_name, "..") != 0) {
@@ -286,6 +277,12 @@ void* thread_fn(void* arg) {
 							strcpy(path, dirent->d_name);
 						}
 
+						if (strcmp(dirent->d_name, "index.html") == 0 ||
+							strcmp(dirent->d_name, "index.htm") == 0) {
+							contains_index = true;
+							break;
+						}
+
 						char encoded[PATH_MAX * 3];
 						urlencode(encoded, path);
 						strcat(body, entry_begin);
@@ -296,20 +293,51 @@ void* thread_fn(void* arg) {
 					}
 				};
 				closedir(dir);
-				strcat(body, list_end);
 
-				// Send everything
-				char content_length[20];
-				sprintf(content_length, "%ld", strlen(body));
 
-				// Header
-				write(client_fd, resp_prefix, strlen(resp_prefix));
-				write(client_fd, content_length, strlen(content_length));
-				write(client_fd, resp_suffix, strlen(resp_suffix));
+				char content_length[32];
+				if (contains_index) {
+					close(file_fd);
+					if ((file_fd = open(path, O_RDONLY)) < 0) {
+						fprintf(stderr, "Could not read the index file!");
+						write(client_fd, error_response, strlen(error_response));
+						free_list(header.headers);
+						close(client_fd);
+						pthread_exit((void*)1);
+					}
+					struct stat index_st;
+					if (fstat(file_fd, &index_st) == -1) {
+						fprintf(stderr, "Could not read the index file!");
+						write(client_fd, error_response, strlen(error_response));
+						free_list(header.headers);
+						close(client_fd);
+						pthread_exit((void*)1);
+					}
+					sprintf(content_length, "%jd", (intmax_t)index_st.st_size);
 
-				// Body
-				write(client_fd, body, strlen(body));
+					write(client_fd, resp_prefix, strlen(resp_prefix));
+					write(client_fd, content_length, strlen(content_length));
+					write(client_fd, resp_suffix, strlen(resp_suffix));
 
+					while((read_bytes = read(file_fd, buffer, BUFFER_SIZE)) > 0) {
+						if (write(client_fd, buffer, read_bytes) != read_bytes) {
+							fprintf(stderr, "Failed to send file completely!\n");
+							break;
+						}
+					}
+				}
+				else {
+					strcat(body, list_end);
+
+					// Send everything
+					sprintf(content_length, "%ld", strlen(body));
+					
+					write(client_fd, resp_prefix, strlen(resp_prefix));
+					write(client_fd, content_length, strlen(content_length));
+					write(client_fd, resp_suffix, strlen(resp_suffix));
+					write(client_fd, body, strlen(body));
+
+				}
 			}
 
 			close(file_fd);
@@ -340,10 +368,10 @@ void urldecode(char* dst, const char* src) {
 			*dst++ = 16 * a + b;
 			src += 3;
 		}
-		else if (*src == '+') {
-			*dst++ = ' ';
-			src++;
-		}
+		//else if (*src == '+') {
+		//	*dst++ = ' ';
+		//	src++;
+		//}
 		else {
 			*dst++ = *src++;
 		}
@@ -455,7 +483,7 @@ void getcontenttype(char* dest, const char* filename) {
 		strcmp(index, ".mov") == 0 ||
 		strcmp(index, ".avi") == 0 ||
 		strcmp(index, ".flv") == 0 ||
-		strcmp(index, "wmv") == 0 ||
+		strcmp(index, ".wmv") == 0 ||
 		strcmp(index, ".webm") == 0) {
 		strcpy(dest, "video/webm");
 	}
