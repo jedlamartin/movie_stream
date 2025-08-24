@@ -12,9 +12,32 @@
 #include "export.h"
 #include "site.h"
 
+void printusage(char* progname, int fd);
+
 int main(int argc, char* argv[]) {
-	(void)argc;    // Silence unused parameter warning
-	(void)argv;    // Silence unused parameter warning
+
+	int opt = -1;
+	int port = PORT;
+
+	while ((opt = getopt(argc, argv, "hp:")) != -1) {
+		switch (opt) {
+		case 'h':
+			printusage(argv[0], STDOUT_FILENO);
+			return 0;
+			break;
+		case 'p':
+			if ((port = strtol(optarg, NULL, 10)) < 1) {
+				printusage(argv[0], STDERR_FILENO);
+				return 1;
+			}
+			break;
+		default:
+			printusage(argv[0], STDERR_FILENO);
+			return 1;
+			break;
+		}
+	}
+
 
 	int socket_fd = -1;
 	if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -34,7 +57,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	// Enabling port reuse
-	int opt = 1;
+	opt = 1;
 	if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) != 0) {
 		fprintf(stderr, "setsockopt(SO_REUSEADDR) failed: %s\n", strerror(errno));
 		exit(1);
@@ -43,7 +66,7 @@ int main(int argc, char* argv[]) {
 	// Bind
 	struct sockaddr_in addr = { .sin_family = AF_INET,
 							   .sin_addr.s_addr = INADDR_ANY,
-							   .sin_port = htons(PORT) };
+							   .sin_port = htons(port) };
 	if (bind(socket_fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
 		char msg[] = "Could not bind socket!";
 		write(STDERR_FILENO, msg, sizeof(msg));
@@ -77,4 +100,10 @@ int main(int argc, char* argv[]) {
 		}
 	}
 	return 0;
+}
+
+void printusage(char* progname, int fd){
+	dprintf(fd, "Usage: %s [-h] [-p port]\n", progname);
+	dprintf(fd, "  -h        Show this help message and exit\n");
+	dprintf(fd, "  -p port   Specify the port to listen on (default: %d)\n", PORT);
 }
