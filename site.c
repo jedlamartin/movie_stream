@@ -313,6 +313,7 @@ void* thread_fn(void* arg) {
 						close(client_fd);
 						pthread_exit((void*)1);
 					}
+					strcat(header.path, "/");
 					sprintf(content_length, "%jd", (intmax_t)index_st.st_size);
 
 					write(client_fd, resp_prefix, strlen(resp_prefix));
