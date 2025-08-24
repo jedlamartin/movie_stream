@@ -3,7 +3,7 @@
 
 #define PORT 8080
 #define MAX_CONNECTIONS 5
-#define BUFFER_SIZE 65536
+#define BUFFER_SIZE 8192
 #define BODY_MAX_SIZE 1048576 // 1 MB
 
 #include <ctype.h>
@@ -25,9 +25,9 @@
 #include "list.h"
 
 typedef struct Header {
-  char version[BUFFER_SIZE];
-  char method[BUFFER_SIZE];
-  char path[BUFFER_SIZE];
+  char version[BUFFER_SIZE - 1];
+  char method[BUFFER_SIZE - 1];
+  char path[PATH_MAX - 1];
   bool keep_alive;
   bool range_request;
   off_t range_start;

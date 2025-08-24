@@ -31,7 +31,7 @@ void* thread_fn(void* arg) {
 
 	while (header.keep_alive) {
 		char buffer[BUFFER_SIZE];
-		ssize_t read_bytes = read(client_fd, buffer, BUFFER_SIZE - 1);
+		ssize_t read_bytes = read(client_fd, buffer, sizeof(buffer) - 1);
 		if (read_bytes <= 0) {
 			fprintf(stderr, "Could not read from socket!");
 			close(client_fd);
@@ -185,7 +185,7 @@ void* thread_fn(void* arg) {
 					strcat(resp, content_end);
 					strcat(resp, "/");
 					char content_size[32];
-					snprintf(content_size,sizeof(content_size), "%jd", (intmax_t)st.st_size);
+					snprintf(content_size, sizeof(content_size), "%jd", (intmax_t)st.st_size);
 					strcat(resp, content_size);
 					strcat(resp, "\r\n");
 
@@ -212,7 +212,7 @@ void* thread_fn(void* arg) {
 
 				strcat(resp, "Content-Length: ");
 				char content_length_str[32];
-				snprintf(content_length_str,sizeof(content_length_str), "%jd", (intmax_t)content_length);
+				snprintf(content_length_str, sizeof(content_length_str), "%jd", (intmax_t)content_length);
 				strcat(resp, content_length_str);
 				strcat(resp, "\r\n");
 
@@ -230,9 +230,9 @@ void* thread_fn(void* arg) {
 				write(client_fd, resp, strlen(resp));
 
 				off_t bytes_remaining = content_length;
-				size_t to_read = bytes_remaining < BUFFER_SIZE ? (size_t)bytes_remaining : BUFFER_SIZE;
+				off_t to_read = bytes_remaining < (off_t)sizeof(buffer) ? bytes_remaining : (off_t)sizeof(buffer);
 				while ((read_bytes = read(file_fd, buffer, to_read)) > 0 && bytes_remaining > 0) {
-					if(read_bytes<0){
+					if (read_bytes < 0) {
 						fprintf(stderr, "Failed to read file!\n");
 						break;
 					}
@@ -241,7 +241,7 @@ void* thread_fn(void* arg) {
 						break;
 					}
 					bytes_remaining -= read_bytes;
-					to_read = bytes_remaining < BUFFER_SIZE ? (size_t)bytes_remaining : BUFFER_SIZE;
+					to_read = bytes_remaining < (off_t)sizeof(buffer) ? bytes_remaining : (off_t)sizeof(buffer);
 				}
 			}
 			else if (S_ISDIR(st.st_mode)) {
@@ -313,14 +313,24 @@ void* thread_fn(void* arg) {
 						close(client_fd);
 						pthread_exit((void*)1);
 					}
-					strcat(header.path, "/");
+					if (header.path[strlen(header.path) - 1] != '/') {
+						char redirect_resp[BUFFER_SIZE];
+						sprintf(redirect_resp,
+							"HTTP/1.1 302 Found\r\n"
+							"Location: /%s/\r\n"
+							"Connection: keep-alive\r\n"
+							"Content-Length: 0\r\n"
+							"\r\n", header.path);
+						write(client_fd, redirect_resp, strlen(redirect_resp));
+					}
+
 					sprintf(content_length, "%jd", (intmax_t)index_st.st_size);
 
 					write(client_fd, resp_prefix, strlen(resp_prefix));
 					write(client_fd, content_length, strlen(content_length));
 					write(client_fd, resp_suffix, strlen(resp_suffix));
 
-					while((read_bytes = read(file_fd, buffer, BUFFER_SIZE)) > 0) {
+					while ((read_bytes = read(file_fd, buffer, sizeof(buffer))) > 0) {
 						if (write(client_fd, buffer, read_bytes) != read_bytes) {
 							fprintf(stderr, "Failed to send file completely!\n");
 							break;
@@ -332,7 +342,7 @@ void* thread_fn(void* arg) {
 
 					// Send everything
 					sprintf(content_length, "%ld", strlen(body));
-					
+
 					write(client_fd, resp_prefix, strlen(resp_prefix));
 					write(client_fd, content_length, strlen(content_length));
 					write(client_fd, resp_suffix, strlen(resp_suffix));
