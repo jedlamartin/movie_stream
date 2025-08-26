@@ -6,12 +6,69 @@ const char error_response[] =
 "Connection: close\r\n"
 "\r\n";
 
-
+/**
+ * @brief Decodes a URL-encoded string.
+ *
+ * Converts percent-encoded characters in the source string to their ASCII equivalents
+ * and stores the result in the destination buffer.
+ *
+ * @param dst Destination buffer for the decoded string.
+ * @param src Source URL-encoded string.
+ */
 void urldecode(char* dst, const char* src);
+
+/**
+ * @brief Encodes a string for safe use in URLs.
+ *
+ * Converts unsafe characters in the source string to percent-encoded form
+ * and stores the result in the destination buffer.
+ *
+ * @param dest Destination buffer for the encoded string.
+ * @param src Source string to encode.
+ */
 void urlencode(char* dest, const char* src);
+
+/**
+ * @brief Converts a relative path to an absolute path.
+ *
+ * Normalizes the given path by removing redundant segments such as "." and "..".
+ *
+ * @param dest Destination buffer for the absolute path.
+ * @param src Source path string.
+ */
 void makeabsolute(char* dest, const char* src);
+
+/**
+ * @brief Determines the MIME content type based on a file's extension.
+ *
+ * Sets the destination buffer to the appropriate MIME type string for the given filename.
+ *
+ * @param dest Destination buffer for the MIME type string.
+ * @param filename Name of the file to check.
+ */
 void getcontenttype(char* dest, const char* filename);
+
+/**
+ * @brief Parses the HTTP Range header value.
+ *
+ * Extracts the start and end byte positions from a Range header string.
+ *
+ * @param content The Range header value (e.g., "bytes=0-499").
+ * @param start Pointer to store the start byte position.
+ * @param end Pointer to store the end byte position.
+ * @return 0 on success, -1 on failure.
+ */
 int getcontentrange(char* content, off_t* start, off_t* end);
+
+/**
+ * @brief Normalizes and clamps byte range values for a file.
+ *
+ * Adjusts the start and end values to valid positions within the file size.
+ *
+ * @param start Pointer to the start byte position.
+ * @param end Pointer to the end byte position.
+ * @param file_size The total size of the file.
+ */
 void normalizeranges(off_t* start, off_t* end, const off_t file_size);
 
 void* thread_fn(void* arg) {
@@ -30,6 +87,7 @@ void* thread_fn(void* arg) {
 	};
 
 	while (header.keep_alive) {
+		// Read the request
 		char buffer[BUFFER_SIZE];
 		ssize_t read_bytes = read(client_fd, buffer, sizeof(buffer) - 1);
 		if (read_bytes <= 0) {
@@ -50,7 +108,8 @@ void* thread_fn(void* arg) {
 			close(client_fd);
 			pthread_exit((void*)1);
 		}
-
+		// Parse the request line - GET /path HTTP/1.1
+		// GET
 		char* save_ptr;
 		char* token = strtok_r(buffer, " \r\n", &save_ptr);
 		if (!token) {
@@ -61,6 +120,8 @@ void* thread_fn(void* arg) {
 		}
 		strncpy(header.method, token, sizeof(header.method) - 1);
 		header.method[sizeof(header.method) - 1] = '\0'; // Ensure null termination
+
+		// /path
 		token = strtok_r(NULL, " \r\n", &save_ptr);
 		if (!token) {
 			fprintf(stderr, "Invalid request format!");
@@ -76,6 +137,8 @@ void* thread_fn(void* arg) {
 		header.path[sizeof(header.path) - 1] = '\0'; // Ensure null termination
 		urldecode(tmp, header.path);
 		makeabsolute(header.path, tmp);
+
+		// HTTP version
 		token = strtok_r(NULL, " \r\n", &save_ptr);
 		if (!token) {
 			fprintf(stderr, "Invalid request format!");
@@ -85,22 +148,22 @@ void* thread_fn(void* arg) {
 		}
 		strcpy(header.version, token);
 
+		// Parse headers
+
 		char* content_type = strtok_r(NULL, ":", &save_ptr);
 		char* content = strtok_r(NULL, "\r\n", &save_ptr);
 		header.headers = create_list(content_type, content);
 
-		//printf("Method:%s\n", header.method);
-		//printf("Path:%s\n", header.path);
-		//printf("Version:%s\n", header.version);
-
+		// Handle HTTP version specifics
 		if (strcmp(header.version, "HTTP/1.1") == 0) {
 
 			while (content != NULL && content_type != NULL) {
 				append_list(header.headers, content_type, content);
 
+				// Check for Connection: close
 				if (strcasecmp(content_type, "Connection") == 0 && strcasecmp(content, "close") == 0) {
 					header.keep_alive = false;
-				}
+				} // Checking for Range
 				else if (strcasecmp(content_type, "Range") == 0) {
 					if (getcontentrange(content, &header.range_start, &header.range_end) == 0) {
 						header.range_request = true;
@@ -131,6 +194,7 @@ void* thread_fn(void* arg) {
 			pthread_exit((void*)1);
 		}
 
+		// Validate method
 		if (strcmp(header.method, "GET") != 0) {
 			fprintf(stderr, "Unsupported HTTP method!");
 			free_list(header.headers);
@@ -138,6 +202,8 @@ void* thread_fn(void* arg) {
 			close(client_fd);
 			pthread_exit((void*)1);
 		}
+
+		// Validate path
 		if (header.path[0] != '/') {
 			fprintf(stderr, "The path must be absolute!");
 			free_list(header.headers);
@@ -151,7 +217,9 @@ void* thread_fn(void* arg) {
 			strcpy(header.path, ".");
 		}
 
+		// Open the file
 		int file_fd = -1;
+		// Check if the file exists
 		if ((file_fd = open(header.path, O_RDONLY)) < 0) {
 			header.keep_alive = false;
 			const char resp[] =
@@ -159,15 +227,18 @@ void* thread_fn(void* arg) {
 				"Connection: close\r\n"
 				"\r\n";
 			write(client_fd, resp, sizeof(resp) - 1);
-		}
+		} 
+		// File exists
 		else {
 			struct stat st;
 			fstat(file_fd, &st);
+			// Check if it's a regular file
 			if (S_ISREG(st.st_mode)) {
 				char resp[BUFFER_SIZE];
 				resp[0] = '\0';
 				off_t content_length;
 
+				// Handle range request
 				if (header.range_request) {
 					strcat(resp, "HTTP/1.1 206 Partial Content\r\n");
 
@@ -201,13 +272,14 @@ void* thread_fn(void* arg) {
 						pthread_exit((void*)1);
 					}
 				}
-				else {
+				// Normal request
+				else { 
 					strcat(resp, "HTTP/1.1 200 OK\r\n"
 						"Connection: ");
 
 					content_length = st.st_size;
 				}
-
+				
 				header.keep_alive ? strcat(resp, "keep-alive\r\n") : strcat(resp, "close\r\n");
 
 				strcat(resp, "Content-Length: ");
@@ -229,6 +301,7 @@ void* thread_fn(void* arg) {
 
 				write(client_fd, resp, strlen(resp));
 
+				// Send the file content at requested range 
 				off_t bytes_remaining = content_length;
 				off_t to_read = bytes_remaining < (off_t)sizeof(buffer) ? bytes_remaining : (off_t)sizeof(buffer);
 				while ((read_bytes = read(file_fd, buffer, to_read)) > 0 && bytes_remaining > 0) {
@@ -244,6 +317,7 @@ void* thread_fn(void* arg) {
 					to_read = bytes_remaining < (off_t)sizeof(buffer) ? bytes_remaining : (off_t)sizeof(buffer);
 				}
 			}
+			// Directory listing
 			else if (S_ISDIR(st.st_mode)) {
 				const char resp_prefix[] = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: keep-alive\r\nContent-Length: ";
 				const char resp_suffix[] = "\r\n\r\n";
@@ -265,6 +339,7 @@ void* thread_fn(void* arg) {
 				char path[PATH_MAX];
 				bool contains_index = false;
 				while ((dirent = readdir(dir)) != NULL) {
+					// Skip . and ..
 					if (strcmp(dirent->d_name, ".") != 0 &&
 						strcmp(dirent->d_name, "..") != 0) {
 
@@ -277,6 +352,7 @@ void* thread_fn(void* arg) {
 							strcpy(path, dirent->d_name);
 						}
 
+						// Check for index.html or index.htm
 						if (strcmp(dirent->d_name, "index.html") == 0 ||
 							strcmp(dirent->d_name, "index.htm") == 0) {
 							contains_index = true;
@@ -294,7 +370,7 @@ void* thread_fn(void* arg) {
 				};
 				closedir(dir);
 
-
+				// Serve index.html or index.htm
 				char content_length[32];
 				if (contains_index) {
 					close(file_fd);
@@ -313,7 +389,9 @@ void* thread_fn(void* arg) {
 						close(client_fd);
 						pthread_exit((void*)1);
 					}
-					if (header.path[strlen(header.path) - 1] != '/') {
+
+					// Redirect to /path/ if index file is in the directory
+					if (header.path[strlen(header.path) - 1] != '/') { 
 						char redirect_resp[BUFFER_SIZE];
 						sprintf(redirect_resp,
 							"HTTP/1.1 302 Found\r\n"

@@ -9,8 +9,10 @@
 #include <signal.h>
 #include <errno.h>
 
-#include "export.h"
 #include "site.h"
+
+#define PORT 8080                // Server listening port
+#define MAX_CONNECTIONS 5        // Maximum simultaneous client connections
 
 void printusage(char* progname, int fd);
 
@@ -18,8 +20,9 @@ int main(int argc, char* argv[]) {
 
 	int opt = -1;
 	int port = PORT;
+	int max_connections = MAX_CONNECTIONS;
 
-	while ((opt = getopt(argc, argv, "hp:")) != -1) {
+	while ((opt = getopt(argc, argv, "hp:c:")) != -1) {
 		switch (opt) {
 		case 'h':
 			printusage(argv[0], STDOUT_FILENO);
@@ -27,6 +30,12 @@ int main(int argc, char* argv[]) {
 			break;
 		case 'p':
 			if ((port = strtol(optarg, NULL, 10)) < 1) {
+				printusage(argv[0], STDERR_FILENO);
+				return 1;
+			}
+			break;
+		case 'c':
+			if ((max_connections = strtol(optarg, NULL, 10))< 1) {
 				printusage(argv[0], STDERR_FILENO);
 				return 1;
 			}
@@ -65,8 +74,8 @@ int main(int argc, char* argv[]) {
 
 	// Bind
 	struct sockaddr_in addr = { .sin_family = AF_INET,
-							   .sin_addr.s_addr = INADDR_ANY,
-							   .sin_port = htons(port) };
+          .sin_addr.s_addr = INADDR_ANY,
+          .sin_port = htons(port) };
 	if (bind(socket_fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
 		char msg[] = "Could not bind socket!";
 		write(STDERR_FILENO, msg, sizeof(msg));
@@ -74,7 +83,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	// Listen
-	if (listen(socket_fd, MAX_CONNECTIONS) != 0) {
+	if (listen(socket_fd, max_connections) != 0) {
 		fprintf(stderr, "listen() failed: %s\n", strerror(errno));
 		exit(1);
 	}
@@ -103,7 +112,8 @@ int main(int argc, char* argv[]) {
 }
 
 void printusage(char* progname, int fd){
-	dprintf(fd, "Usage: %s [-h] [-p port]\n", progname);
+	dprintf(fd, "Usage: %s [-h] [-p port] [-c max_connections]\n", progname);
 	dprintf(fd, "  -h        Show this help message and exit\n");
 	dprintf(fd, "  -p port   Specify the port to listen on (default: %d)\n", PORT);
+	dprintf(fd, "  -c max_connections   Specify the maximum simultaneous client connections (default: %d)\n", MAX_CONNECTIONS);
 }
