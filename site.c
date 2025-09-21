@@ -301,20 +301,72 @@ void* thread_fn(void* arg) {
 
 				write(client_fd, resp, strlen(resp));
 
-				// Send the file content at requested range 
-				off_t bytes_remaining = content_length;
-				off_t to_read = bytes_remaining < (off_t)sizeof(buffer) ? bytes_remaining : (off_t)sizeof(buffer);
-				while ((read_bytes = read(file_fd, buffer, to_read)) > 0 && bytes_remaining > 0) {
-					if (read_bytes < 0) {
-						fprintf(stderr, "Failed to read file!\n");
-						break;
+				if (strstr(content_type, "video") && !header.range_request) {
+					AVFormatContext* fmt_ctx = NULL;
+					if (avformat_open_input(&fmt_ctx, header.path, NULL, NULL) != 0 || avformat_find_stream_info(fmt_ctx, NULL) < 0) {
+						fprintf(stderr, "ffmpeg opening failed");
+						free_list(header.headers);
+						close(file_fd);
+						close(client_fd);
+						pthread_exit((void*)1);
 					}
-					else if (write(client_fd, buffer, read_bytes) != read_bytes) {
-						fprintf(stderr, "Failed to send file completely!\n");
-						break;
+
+					char subtitle_path[PATH_MAX];
+					int length = strchr(header.path, '.') - header.path;
+					strncpy(subtitle_path, header.path, length);
+					subtitle_path[length] = '\0';
+
+
+					for (int i = 0; i < fmt_ctx->nb_streams; i++){
+						if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+							char tmp_path[PATH_MAX];
+							strncpy(tmp_path, subtitle_path, PATH_MAX - 1 - 3);
+
+							AVDictionaryEntry* tag;
+							tag = av_dict_get(fmt_ctx->streams[i]->metadata, "language", NULL, 0);
+							if(tag==NULL) {
+								strcat(tmp_path, ".vtt");
+							}
+							else{
+								strcat(tmp_path, ".");
+								strcat(tmp_path, tag->value);
+								strcat(tmp_path, ".vtt");
+							}
+
+							int subtitle_fd = -1;
+							if ((subtitle_fd = open(tmp_path, O_CREAT)) < 0) {
+								fprintf(stderr, "could not create subtitle file");
+								avformat_close_input(&fmt_ctx);
+								free_list(header.headers);
+								close(file_fd);
+								close(client_fd);
+								pthread_exit((void*)1);
+							}
+
+							// Write the subtitle file
+
+						}
 					}
-					bytes_remaining -= read_bytes;
-					to_read = bytes_remaining < (off_t)sizeof(buffer) ? bytes_remaining : (off_t)sizeof(buffer);
+
+					
+
+				}
+				else {
+					// Send the file content at requested range 
+					off_t bytes_remaining = content_length;
+					off_t to_read = bytes_remaining < (off_t)sizeof(buffer) ? bytes_remaining : (off_t)sizeof(buffer);
+					while ((read_bytes = read(file_fd, buffer, to_read)) > 0 && bytes_remaining > 0) {
+						if (read_bytes < 0) {
+							fprintf(stderr, "Failed to read file!\n");
+							break;
+						}
+						else if (write(client_fd, buffer, read_bytes) != read_bytes) {
+							fprintf(stderr, "Failed to send file completely!\n");
+							break;
+						}
+						bytes_remaining -= read_bytes;
+						to_read = bytes_remaining < (off_t)sizeof(buffer) ? bytes_remaining : (off_t)sizeof(buffer);
+					}
 				}
 			}
 			// Directory listing
@@ -573,10 +625,8 @@ void getcontenttype(char* dest, const char* filename) {
 		strcmp(index, ".avi") == 0 ||
 		strcmp(index, ".flv") == 0 ||
 		strcmp(index, ".wmv") == 0 ||
-		strcmp(index, ".webm") == 0) {
-		strcpy(dest, "video/webm");
-	}
-	else if (strcmp(index, ".mp4") == 0) {
+		strcmp(index, ".webm") == 0 ||
+		strcmp(index, ".mp4") == 0) {
 		strcpy(dest, "video/mp4");
 	}
 	else if (strcmp(index, ".m4v") == 0) {

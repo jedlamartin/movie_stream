@@ -18,6 +18,8 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <inttypes.h>
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
 
 #include "list.h"
 
