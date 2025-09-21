@@ -1,6 +1,6 @@
 #include "video.h"
 
-char** generate_subtitles(const char* video_path){
+Subtitle* generate_subtitles(const char* video_path){
 	AVFormatContext* fmt_ctx = NULL;
 	if (avformat_open_input(&fmt_ctx, video_path, NULL, NULL) != 0 || avformat_find_stream_info(fmt_ctx, NULL) < 0) {
 		fprintf(stderr, "ffmpeg opening failed");
