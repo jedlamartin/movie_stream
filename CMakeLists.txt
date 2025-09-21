@@ -5,7 +5,7 @@ project(movie_stream)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil)
 
-add_executable(movie_stream main.c site.c site.h list.c list.h)
+add_executable(movie_stream main.c site.c site.h list.c list.h video.c video.h)
 
 target_include_directories(movie_stream PRIVATE ${FFMPEG_INCLUDE_DIRS})
 target_link_libraries(movie_stream ${FFMPEG_LIBRARIES})

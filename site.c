@@ -284,6 +284,7 @@ void* thread_fn(void* arg) {
 
 				strcat(resp, "Content-Length: ");
 				char content_length_str[32];
+				// itt meg kell csinalni, hogy ha html-t kuldok, akkor annak a hossza legyen itt
 				snprintf(content_length_str, sizeof(content_length_str), "%jd", (intmax_t)content_length);
 				strcat(resp, content_length_str);
 				strcat(resp, "\r\n");
@@ -302,54 +303,26 @@ void* thread_fn(void* arg) {
 				write(client_fd, resp, strlen(resp));
 
 				if (strstr(content_type, "video") && !header.range_request) {
-					AVFormatContext* fmt_ctx = NULL;
-					if (avformat_open_input(&fmt_ctx, header.path, NULL, NULL) != 0 || avformat_find_stream_info(fmt_ctx, NULL) < 0) {
-						fprintf(stderr, "ffmpeg opening failed");
-						free_list(header.headers);
-						close(file_fd);
-						close(client_fd);
-						pthread_exit((void*)1);
-					}
-
-					char subtitle_path[PATH_MAX];
-					int length = strchr(header.path, '.') - header.path;
-					strncpy(subtitle_path, header.path, length);
-					subtitle_path[length] = '\0';
-
-
-					for (int i = 0; i < fmt_ctx->nb_streams; i++){
-						if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
-							char tmp_path[PATH_MAX];
-							strncpy(tmp_path, subtitle_path, PATH_MAX - 1 - 3);
-
-							AVDictionaryEntry* tag;
-							tag = av_dict_get(fmt_ctx->streams[i]->metadata, "language", NULL, 0);
-							if(tag==NULL) {
-								strcat(tmp_path, ".vtt");
-							}
-							else{
-								strcat(tmp_path, ".");
-								strcat(tmp_path, tag->value);
-								strcat(tmp_path, ".vtt");
-							}
-
-							int subtitle_fd = -1;
-							if ((subtitle_fd = open(tmp_path, O_CREAT)) < 0) {
-								fprintf(stderr, "could not create subtitle file");
-								avformat_close_input(&fmt_ctx);
-								free_list(header.headers);
-								close(file_fd);
-								close(client_fd);
-								pthread_exit((void*)1);
-							}
-
-							// Write the subtitle file
-
-						}
-					}
-
+					char html_resp[BUFFER_SIZE];
+					strncat(html_resp, "<video controls width = \"640\">\n< source src = \"", BUFFER_SIZE - 1);
+					strncat(html_resp, header.path, BUFFER_SIZE - strlen(html_resp) - 1);
+					strncat(html_resp, "\" type = \"video / mp4\">\n", BUFFER_SIZE - strlen(html_resp) - 1);
 					
+					Subtitle* subtitles = generate_subtitles(header.path);
+					if (subtitles) {
+						for (int i = 0; subtitles[i].path != NULL; i++) {
 
+							strncat(html_resp, "<track src = \"", BUFFER_SIZE - strlen(html_resp) - 1);
+							strncat(html_resp, subtitles[i].path, BUFFER_SIZE - strlen(html_resp) - 1);
+							strncat(html_resp, "\" kind = \"subtitles\" srclang = \"", BUFFER_SIZE - strlen(html_resp) - 1);
+							strncat(html_resp, subtitles[i].language, BUFFER_SIZE - strlen(html_resp) - 1);
+							strncat(html_resp, "\" label = \"", BUFFER_SIZE - strlen(html_resp) - 1);
+							strncat(html_resp, subtitles[i].language, BUFFER_SIZE - strlen(html_resp) - 1);
+							strncat(html_resp, "\" >\n", BUFFER_SIZE - strlen(html_resp) - 1);
+													}
+					}
+					strncat(html_resp, "</video>\n</body>", BUFFER_SIZE - strlen(html_resp) - 1);
+					write(client_fd, html_resp, strlen(html_resp));
 				}
 				else {
 					// Send the file content at requested range 
