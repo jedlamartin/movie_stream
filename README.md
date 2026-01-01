@@ -4,6 +4,7 @@ Movie Stream is a minimal, concurrent HTTP/1.1 server written in C. It is design
 
 ## Features
 
+*   Automatically converts `.mkv` files to HLS (`.m3u8` playlists and `.ts` segments) for web playback.
 *   Handles basic `GET` requests (HTTP/1.1)
 *   Concurrent client handling using a `fork()`-based model
 *   Automatic MIME type detection for served files
@@ -14,28 +15,43 @@ Movie Stream is a minimal, concurrent HTTP/1.1 server written in C. It is design
 
 *   C compiler (e.g., gcc or clang)
 *   CMake >= 3.10
+*   FFmpeg Development Libraries:
+    * `libavcodec-dev`
+    * `libavformat-dev`
+    * `libavutil-dev`
+    * `libswscale-dev`
 *   POSIX-compliant operating system (Linux, macOS, etc.)
+
 
 ## Build Instructions
 
-1. Clone the repository:
+1.  **Install Dependencies** (Debian/Ubuntu/Raspberry Pi):
     ```bash
-    git clone <repository-url>
+    sudo apt-get update
+    sudo apt-get install cmake libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+    ```
+
+2.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/jedlamartin/movie_stream
     cd movie_stream
     ```
 
-2. Configure the project with CMake:
+3.  **Configure and Build:**
     ```bash
-    cmake .
-    ```
-
-3. Build the server:
-    ```bash
+    mkdir build
+    cd build
+    cmake ..
     cmake --build .
     ```
 
 ## Run the Server
 
+The server accepts command-line arguments to configure the port and connection limits.
+
+```bash
+./movie_stream [-p port] [-c max_connections]
+```
 Start the server on a specific port (e.g., 8080):
 By default, the server serves files from the current working directory.
 
