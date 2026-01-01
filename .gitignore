@@ -11,3 +11,4 @@ index.html
 /.vs/*
 /out/*
 /CMakeSettings.json
+build/*

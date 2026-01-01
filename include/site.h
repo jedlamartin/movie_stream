@@ -1,14 +1,16 @@
 #ifndef SITE_H
 #define SITE_H
 
-#define BUFFER_SIZE 8192         // Buffer size for reading requests/responses
+#define BUFFER_SIZE   8192       // Buffer size for reading requests/responses
 #define BODY_MAX_SIZE 1048576    // Maximum allowed HTTP body size (1 MB)
 
 #include <ctype.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,11 +18,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <stdbool.h>
-#include <inttypes.h>
 
+#include "ffmpeg_utils.h"
 #include "list.h"
-#include "video.h"
 
 /**
  * @struct Header
@@ -42,16 +42,15 @@
  * - headers:      Pointer to a linked list of additional HTTP headers.
  */
 typedef struct Header {
-  char version[BUFFER_SIZE - 1];
-  char method[BUFFER_SIZE - 1];
-  char path[PATH_MAX - 1];
-  bool keep_alive;
-  bool range_request;
-  off_t range_start;
-  off_t range_end;
-  List* headers;
+    char version[BUFFER_SIZE - 1];
+    char method[BUFFER_SIZE - 1];
+    char path[PATH_MAX - 1];
+    bool keep_alive;
+    bool range_request;
+    off_t range_start;
+    off_t range_end;
+    List* headers;
 } Header;
-
 
 /**
  * @brief Thread function to handle client connections.
@@ -62,7 +61,8 @@ typedef struct Header {
  * information. The function processes the client's HTTP request, sends the
  * appropriate response, and closes the connection when done.
  *
- * @param arg Pointer to the client connection information (typically a socket fd).
+ * @param arg Pointer to the client connection information (typically a socket
+ * fd).
  * @return void* Always returns NULL.
  */
 void* thread_fn(void* arg);
