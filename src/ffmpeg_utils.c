@@ -1,36 +1,126 @@
+#define _DEFAULT_SOURCE
 #include "ffmpeg_utils.h"
 
+#include <ctype.h>
+#include <libavformat/avformat.h>
+#include <libavutil/dict.h>
+#include <libavutil/log.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Helper: Ensures string is safe for FFmpeg command (only alphanumeric +
+// underscores)
+void sanitize_name(char* dst, const char* src, size_t max_len) {
+    size_t j = 0;
+    for(size_t i = 0; src[i] != '\0' && j < max_len - 1; i++) {
+        unsigned char c = src[i];
+        if(isalnum(c)) {
+            dst[j++] = c;
+        } else {
+            dst[j++] = '_';    // Replace everything else with underscore
+        }
+    }
+    dst[j] = '\0';
+
+    // Remove trailing underscores
+    while(j > 0 && dst[j - 1] == '_') {
+        dst[--j] = '\0';
+    }
+
+    if(j == 0) strcpy(dst, "und");
+}
+
 TrackInfo get_track_counts(const char* filename) {
-    TrackInfo info = {0, 0, 0, 0};
+    TrackInfo info;
+    memset(&info, 0, sizeof(TrackInfo));
+
     AVFormatContext* fmt_ctx = NULL;
+    av_log_set_level(AV_LOG_QUIET);    // Keep FFmpeg library quiet
 
-    // Suppress FFmpeg logs
-    av_log_set_level(AV_LOG_QUIET);
-
-    // Open video file
     if(avformat_open_input(&fmt_ctx, filename, NULL, NULL) < 0) {
-        fprintf(stderr, "Could not open source file %s\n", filename);
         info.error = 1;
         return info;
     }
-
-    // Retrieve stream information
     if(avformat_find_stream_info(fmt_ctx, NULL) < 0) {
-        fprintf(stderr, "Could not find stream info\n");
         avformat_close_input(&fmt_ctx);
         info.error = 1;
         return info;
     }
 
-    // Count streams
+    int a_idx = 0;
+    int s_idx = 0;
+
     for(unsigned int i = 0; i < fmt_ctx->nb_streams; i++) {
-        if(fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+        AVStream* st = fmt_ctx->streams[i];
+        AVDictionaryEntry* lang =
+            av_dict_get(st->metadata, "language", NULL, 0);
+
+        if(st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
             info.video_count++;
-        } else if(fmt_ctx->streams[i]->codecpar->codec_type ==
-                  AVMEDIA_TYPE_AUDIO) {
+        } else if(st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            if(a_idx < MAX_TRACKS) {
+                // 1. DIRECTLY USE LANGUAGE CODE (eng, jpn)
+                if(lang) {
+                    strncpy(info.audio[a_idx].lang, lang->value, 3);
+                    info.audio[a_idx].lang[3] = '\0';
+                } else {
+                    strcpy(info.audio[a_idx].lang, "und");
+                }
+
+                // Set Title = Language Code (e.g. "jpn")
+                strcpy(info.audio[a_idx].title, info.audio[a_idx].lang);
+
+                // Sanitize just in case
+                sanitize_name(
+                    info.audio[a_idx].title, info.audio[a_idx].title, 63);
+
+                // Handle Duplicates (eng, eng_2, eng_3)
+                int dup_count = 1;
+                for(int k = 0; k < a_idx; k++) {
+                    if(strncmp(info.audio[k].title,
+                               info.audio[a_idx].title,
+                               63) == 0) {
+                        dup_count++;
+                    }
+                }
+                if(dup_count > 1) {
+                    char suffix[16];
+                    snprintf(suffix, sizeof(suffix), "_%d", dup_count);
+                    strcat(info.audio[a_idx].title, suffix);
+                }
+
+                a_idx++;
+            }
             info.audio_count++;
-        } else if(fmt_ctx->streams[i]->codecpar->codec_type ==
-                  AVMEDIA_TYPE_SUBTITLE) {
+        } else if(st->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+            if(s_idx < MAX_TRACKS) {
+                if(lang) {
+                    strncpy(info.subs[s_idx].lang, lang->value, 3);
+                    info.subs[s_idx].lang[3] = '\0';
+                } else {
+                    strcpy(info.subs[s_idx].lang, "und");
+                }
+
+                strcpy(info.subs[s_idx].title, info.subs[s_idx].lang);
+                sanitize_name(
+                    info.subs[s_idx].title, info.subs[s_idx].title, 63);
+
+                int dup_count = 1;
+                for(int k = 0; k < s_idx; k++) {
+                    if(strncmp(
+                           info.subs[k].title, info.subs[s_idx].title, 63) == 0)
+                        dup_count++;
+                }
+                if(dup_count > 1) {
+                    char suffix[16];
+                    snprintf(suffix, sizeof(suffix), "_%d", dup_count);
+                    strcat(info.subs[s_idx].title, suffix);
+                }
+
+                s_idx++;
+            }
             info.subtitle_count++;
         }
     }
@@ -39,68 +129,92 @@ TrackInfo get_track_counts(const char* filename) {
     return info;
 }
 
-int generate_hls_with_tracks(const char* mkv_path, const char* hls_dir) {
-    TrackInfo info = get_track_counts(mkv_path);
+static int run_ffmpeg_command(const char* mkv_path,
+                              const char* hls_dir,
+                              TrackInfo info,
+                              int include_subs) {
+    char cmd[16384];
+    char var_stream_map[4096] = "";
+    char map_args[2048] = "";
+    char abs_mkv_path[PATH_MAX];
 
-    if(info.error || info.video_count == 0) {
-        return -1;
-    }
+    if(!realpath(mkv_path, abs_mkv_path)) strcpy(abs_mkv_path, mkv_path);
 
-    char cmd[4096];
-    char var_stream_map[1024] = "";
-    char map_args[1024] = "";
-
-    // Step A: Build the Mapping Arguments
-    // We want to map Video:0 and ALL audio tracks.
-    // Example: "-map 0:v:0 -map 0:a:0 -map 0:a:1"
-
-    strcpy(map_args, "-map 0:v:0");    // Always map the first video track
-
-    // Map every audio track found
+    strcpy(map_args, "-map 0:v:0");
     for(int i = 0; i < info.audio_count; i++) {
         char buf[64];
         snprintf(buf, sizeof(buf), " -map 0:a:%d", i);
         strcat(map_args, buf);
     }
+    if(include_subs) {
+        for(int i = 0; i < info.subtitle_count; i++) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), " -map 0:s:%d", i);
+            strcat(map_args, buf);
+        }
+    }
 
-    // Step B: Build the var_stream_map string
-    // This tells HLS how to pair them.
-    // We want pairs like: "v:0,a:0 v:0,a:1 v:0,a:2"
-    // This creates a separate stream for every audio language, all sharing
-    // video track 0.
-
+    // STREAM MAP
     for(int i = 0; i < info.audio_count; i++) {
-        char buf[64];
-        // v:0 refers to the first mapped video stream
-        // a:i refers to the i-th mapped audio stream
-        snprintf(buf, sizeof(buf), "v:0,a:%d ", i);
+        char buf[256];
+        snprintf(buf,
+                 sizeof(buf),
+                 "a:%d,agroup:audio,language:%s,name:%s,default:%s ",
+                 i,
+                 info.audio[i].lang,
+                 info.audio[i].title,
+                 (i == 0 ? "yes" : "no"));
         strcat(var_stream_map, buf);
     }
 
-    // Step C: Construct the final command
+    if(include_subs) {
+        for(int i = 0; i < info.subtitle_count; i++) {
+            char buf[256];
+            snprintf(buf,
+                     sizeof(buf),
+                     "s:%d,sgroup:subs,language:%s,name:%s ",
+                     i,
+                     info.subs[i].lang,
+                     info.subs[i].title);
+            strcat(var_stream_map, buf);
+        }
+    }
+
+    strcat(var_stream_map, "v:0,agroup:audio");
+    if(include_subs) strcat(var_stream_map, ",sgroup:subs");
+
+    // COMMAND (Restored > /dev/null 2>&1 to be silent)
     snprintf(cmd,
              sizeof(cmd),
-             "ffmpeg -i \"%s\" "
-             "%s "           // Insert the -map arguments
-             "-c:v copy "    // Copy video (fast)
-             "-c:a aac "     // Convert audio to AAC (compatible)
-             "-f hls "
-             "-hls_time 10 "
-             "-hls_list_size 0 "
+             "ffmpeg -i \"%s\" %s "
+             "-c:v copy -c:a aac %s "
+             "-f hls -hls_time 10 -hls_list_size 0 "
+             "-hls_playlist_type vod "
+             "-hls_flags independent_segments "
              "-hls_segment_filename \"%s/segment_%%v_%%03d.ts\" "
              "-master_pl_name master.m3u8 "
-             "-var_stream_map \"%s\" "    // Insert the stream map
+             "-var_stream_map \"%s\" "
              "\"%s/stream_%%v.m3u8\" > /dev/null 2>&1",
-             mkv_path,
+             abs_mkv_path,
              map_args,
+             include_subs ? "-c:s webvtt" : "",
              hls_dir,
              var_stream_map,
              hls_dir);
 
-    printf("[HLS] Generating streams... Video: %d, Audio: %d\n",
-           info.video_count,
-           info.audio_count);
+    // Removed the printf("[DEBUG] Command: ...")
 
-    int ret = system(cmd);
-    return (ret == 0) ? 0 : -1;
+    return system(cmd);
+}
+
+int generate_hls_with_tracks(const char* mkv_path, const char* hls_dir) {
+    TrackInfo info = get_track_counts(mkv_path);
+    if(info.error || info.video_count == 0) return -1;
+
+    // Try with subtitles first
+    if(info.subtitle_count > 0) {
+        if(run_ffmpeg_command(mkv_path, hls_dir, info, 1) == 0) return 0;
+        // Subtitles failed (likely PGS/ASS). Retry silently without.
+    }
+    return run_ffmpeg_command(mkv_path, hls_dir, info, 0);
 }
