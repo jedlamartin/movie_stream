@@ -394,9 +394,10 @@ void* thread_fn(void* arg) {
                 const char resp_suffix[] = "\r\n\r\n";
                 const char html_prefix[] =
                     "<h1>Directory Listing</h1>Directory: ";
-                const char list_begin[] =
-                    "<hr><table border='0' cellpadding='5'>";
-                const char list_end[] = "</table><hr>";
+
+                // --- RESTORED TO ORIGINAL LIST FORMAT ---
+                const char list_begin[] = "<hr><ul>";
+                const char list_end[] = "</ul><hr>";
 
                 char body[BODY_MAX_SIZE];
                 body[0] = '\0';
@@ -422,28 +423,31 @@ void* thread_fn(void* arg) {
                         // Is this a video file?
                         int is_video = (strstr(dirent->d_name, ".mkv") != NULL);
 
-                        // Build HTML Row
-                        // Link 1: Direct File
-                        strcat(body, "<tr><td><a href=\"/");
+                        // 1. Open List Item
+                        strcat(body, "<li>");
+
+                        // 2. The File Link
+                        strcat(body, "<a href=\"/");
                         strcat(body, encoded);
                         strcat(body, "\">");
                         strcat(body, dirent->d_name);
-                        strcat(body, "</a></td>");
+                        strcat(body, "</a>");
 
-                        // Link 2: Optional Stream Button
+                        // 3. The Stream Button (Only if Video)
                         if(is_video) {
-                            strcat(body, "<td><a href=\"/");
+                            strcat(body, " <a href=\"/");
                             strcat(body, encoded);
                             strcat(body,
                                    "?mode=hls\" "
                                    "style='background:#d35400;color:white;"
                                    "padding:2px "
-                                   "8px;text-decoration:none;border-radius:3px;"
-                                   "font-size:0.8em;'>[Stream]</a></td>");
-                        } else {
-                            strcat(body, "<td></td>");
+                                   "6px;text-decoration:none;border-radius:3px;"
+                                   "font-size:0.8em;margin-left:10px;'>[Stream]"
+                                   "</a>");
                         }
-                        strcat(body, "</tr>");
+
+                        // 4. Close List Item
+                        strcat(body, "</li>");
                     }
                 }
                 closedir(dir);
