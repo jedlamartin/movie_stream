@@ -48,6 +48,7 @@ typedef struct Header {
     char path[PATH_MAX - 1];
     bool keep_alive;
     bool range_request;
+    char query[256];
     off_t range_start;
     off_t range_end;
     List* headers;

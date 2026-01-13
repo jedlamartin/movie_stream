@@ -140,12 +140,23 @@ void* thread_fn(void* arg) {
             pthread_exit(NULL);
         }
 
-        char* query = strchr(token, '?');
+        char* query_start = strchr(token, '?');
+        if(query_start) {
+            // Split path and query
+            *query_start = '\0';
+            query_start++;    // Move past '?'
+            strncpy(header.query, query_start, sizeof(header.query) - 1);
+            header.query[sizeof(header.query) - 1] = '\0';
+        } else {
+            header.query[0] = '\0';
+        }
+
         char tmp[BUFFER_SIZE];
-        size_t path_len = query ? (size_t) (query - token) : strlen(token);
+        size_t path_len = strlen(token);
         if(path_len >= sizeof(header.path)) path_len = sizeof(header.path) - 1;
         strncpy(header.path, token, path_len);
         header.path[path_len] = '\0';
+
         urldecode(tmp, header.path);
         makeabsolute(header.path, tmp);
 
@@ -189,7 +200,8 @@ void* thread_fn(void* arg) {
                 getcontenttype(content_type_str, header.path);
 
                 if(strstr(content_type_str, "video") &&
-                   strstr(header.path, ".mkv") && !header.range_request) {
+                   strstr(header.path, ".mkv") && !header.range_request &&
+                   strcmp(header.query, "mode=hls") == 0) {
                     char hls_dir[PATH_MAX];
                     int status = check_or_start_hls(header.path, hls_dir);
 
@@ -202,7 +214,8 @@ void* thread_fn(void* arg) {
                             "<html><head><meta http-equiv='refresh' "
                             "content='5'></head><body "
                             "style='background:#111;color:white;text-align:"
-                            "center;padding-top:20%%;font-family:sans-serif;'>"
+                            "center;padding-top:20%%;font-family:sans-"
+                            "serif;'>"
                             "<h1>Processing Video...</h1><p>Please "
                             "wait...</p></body></html>");
                         write(client_fd, resp, strlen(resp));
@@ -218,7 +231,8 @@ void* thread_fn(void* arg) {
                             "text/html\r\nConnection: close\r\n\r\n"
                             "<html><body "
                             "style='background:#111;color:red;text-align:"
-                            "center;font-family:sans-serif;padding-top:20%%;'>"
+                            "center;font-family:sans-serif;padding-top:20%%"
+                            ";'>"
                             "<h1>Conversion Failed</h1><p>Check server "
                             "logs.</p></body></html>");
                         write(client_fd, resp, strlen(resp));
@@ -247,10 +261,13 @@ void* thread_fn(void* arg) {
                             "hls.js@latest\"></script>"
                             "<style>body{background:#111;color:white;text-"
                             "align:center;font-family:sans-serif;} "
-                            "select{padding:10px;margin:10px;background:#333;"
-                            "color:white;border:1px solid #555;}</style></head>"
+                            "select{padding:10px;margin:10px;background:#"
+                            "333;"
+                            "color:white;border:1px solid "
+                            "#555;}</style></head>"
                             "<body><h2>%s</h2><div><label>Audio: <select "
-                            "id='audioSelect'></select></label><label>Subs: "
+                            "id='audioSelect'></select></"
+                            "label><label>Subs: "
                             "<select id='subSelect'></select></label></div>"
                             "<video id='video' controls "
                             "style='width:80%%;max-width:1000px;margin-top:"
@@ -260,7 +277,8 @@ void* thread_fn(void* arg) {
                             "src='%s';"
                             "if(Hls.isSupported()){var h=new "
                             "Hls();h.loadSource(src);h.attachMedia(v);"
-                            "h.on(Hls.Events.MANIFEST_PARSED,function(){v.play("
+                            "h.on(Hls.Events.MANIFEST_PARSED,function(){v."
+                            "play("
                             ");updateTracks();});"
                             "h.on(Hls.Events.AUDIO_TRACKS_UPDATED, "
                             "updateTracks);"
@@ -271,26 +289,34 @@ void* thread_fn(void* arg) {
                             "as=document.getElementById('audioSelect');as."
                             "innerHTML='';"
                             "h.audioTracks.forEach((t,i)=>{var "
-                            "o=document.createElement('option');o.value=i;o."
+                            "o=document.createElement('option');o.value=i;"
+                            "o."
                             "text=t.name||t.lang||'Track "
-                            "'+(i+1);if(i===h.audioTrack)o.selected=true;as."
+                            "'+(i+1);if(i===h.audioTrack)o.selected=true;"
+                            "as."
                             "add(o);});"
                             "var "
                             "ss=document.getElementById('subSelect');ss."
                             "innerHTML='';"
                             "var "
-                            "off=document.createElement('option');off.value=-1;"
+                            "off=document.createElement('option');off."
+                            "value=-1;"
                             "off.text='Off';if(h.subtitleTrack===-1)off."
                             "selected=true;ss.add(off);"
                             "h.subtitleTracks.forEach((t,i)=>{var "
-                            "o=document.createElement('option');o.value=i;o."
+                            "o=document.createElement('option');o.value=i;"
+                            "o."
                             "text=t.name||t.lang||'Sub "
-                            "'+(i+1);if(i===h.subtitleTrack)o.selected=true;ss."
+                            "'+(i+1);if(i===h.subtitleTrack)o.selected="
+                            "true;ss."
                             "add(o);});}"
-                            "document.getElementById('audioSelect').onchange="
-                            "function(){h.audioTrack=parseInt(this.value);};"
+                            "document.getElementById('audioSelect')."
+                            "onchange="
+                            "function(){h.audioTrack=parseInt(this.value);}"
+                            ";"
                             "document.getElementById('subSelect').onchange="
-                            "function(){h.subtitleTrack=parseInt(this.value);};"
+                            "function(){h.subtitleTrack=parseInt(this."
+                            "value);};"
                             "}else "
                             "if(v.canPlayType('application/"
                             "vnd.apple.mpegurl')){v.src=src;}"
@@ -361,19 +387,16 @@ void* thread_fn(void* arg) {
                         write(client_fd, buffer, read_bytes);
                 }
             } else if(S_ISDIR(st.st_mode)) {
-                // Directory listing logic (abbreviated for clarity, but
-                // unchanged)
+                // Directory listing logic
                 const char resp_prefix[] =
                     "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: "
                     "keep-alive\r\nContent-Length: ";
                 const char resp_suffix[] = "\r\n\r\n";
                 const char html_prefix[] =
                     "<h1>Directory Listing</h1>Directory: ";
-                const char list_begin[] = "<hr><ul>";
-                const char list_end[] = "</ul><hr>";
-                const char entry_begin[] = "<li><a href=\"/";
-                const char entry_mid[] = "\">";
-                const char entry_end[] = "</a></li>";
+                const char list_begin[] =
+                    "<hr><table border='0' cellpadding='5'>";
+                const char list_end[] = "</table><hr>";
 
                 char body[BODY_MAX_SIZE];
                 body[0] = '\0';
@@ -395,11 +418,32 @@ void* thread_fn(void* arg) {
                             strcpy(path, dirent->d_name);
                         }
                         urlencode(encoded, path);
-                        strcat(body, entry_begin);
+
+                        // Is this a video file?
+                        int is_video = (strstr(dirent->d_name, ".mkv") != NULL);
+
+                        // Build HTML Row
+                        // Link 1: Direct File
+                        strcat(body, "<tr><td><a href=\"/");
                         strcat(body, encoded);
-                        strcat(body, entry_mid);
+                        strcat(body, "\">");
                         strcat(body, dirent->d_name);
-                        strcat(body, entry_end);
+                        strcat(body, "</a></td>");
+
+                        // Link 2: Optional Stream Button
+                        if(is_video) {
+                            strcat(body, "<td><a href=\"/");
+                            strcat(body, encoded);
+                            strcat(body,
+                                   "?mode=hls\" "
+                                   "style='background:#d35400;color:white;"
+                                   "padding:2px "
+                                   "8px;text-decoration:none;border-radius:3px;"
+                                   "font-size:0.8em;'>[Stream]</a></td>");
+                        } else {
+                            strcat(body, "<td></td>");
+                        }
+                        strcat(body, "</tr>");
                     }
                 }
                 closedir(dir);
@@ -420,7 +464,7 @@ void* thread_fn(void* arg) {
     pthread_exit(NULL);
 }
 
-// Helpers (Same as before)
+// Helpers
 void urldecode(char* dst, const char* src) {
     char a, b;
     while(*src) {
