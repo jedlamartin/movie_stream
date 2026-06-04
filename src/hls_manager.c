@@ -112,18 +112,42 @@ int handle_hls_request(int client_fd,
                        Header* header,
                        const char* abs_path,
                        const char* content_type_str) {
+    // 1. THE HEARTBEAT PING LISTENER (Prevents deletion when paused)
+    if(strcmp(header->query, "mode=hls_ping") == 0) {
+        char hls_dir[PATH_MAX];
+        snprintf(hls_dir, sizeof(hls_dir), "%s.hls", abs_path);
+
+        char access_file[PATH_MAX + 32];
+        snprintf(access_file, sizeof(access_file), "%s/.access", hls_dir);
+
+        // This "touches" the file, updating its modified time so the Janitor
+        // resets its countdown
+        FILE* f = fopen(access_file, "w");
+        if(f) fclose(f);
+
+        char* ok = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nOK";
+        write(client_fd, ok, strlen(ok));
+        return 1;
+    }
+
+    // 2. THE MAIN STREAM LISTENER
     if(strstr(content_type_str, "video") && strstr(abs_path, ".mkv") &&
        !header->range_request && strcmp(header->query, "mode=hls") == 0) {
         char hls_dir[PATH_MAX];
         int status = check_or_start_hls(abs_path, hls_dir);
         char resp[BUFFER_SIZE * 4];
 
+        const char* hls_folder_name = strrchr(hls_dir, '/');
+        if(hls_folder_name) hls_folder_name++;
+        else
+            hls_folder_name = hls_dir;
+
         if(status == 1) {
             snprintf(
                 resp,
                 sizeof(resp),
-                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: "
-                "close\r\n\r\n"
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; "
+                "charset=utf-8\r\nConnection: close\r\n\r\n"
                 "<html><head><meta http-equiv='refresh' content='2'></head>"
                 "<body "
                 "style='background:#111;color:white;text-align:center;padding-"
@@ -134,8 +158,8 @@ int handle_hls_request(int client_fd,
         } else if(status == -1) {
             snprintf(resp,
                      sizeof(resp),
-                     "HTTP/1.1 500 Error\r\nContent-Type: "
-                     "text/html\r\nConnection: close\r\n\r\n"
+                     "HTTP/1.1 500 Error\r\nContent-Type: text/html; "
+                     "charset=utf-8\r\nConnection: close\r\n\r\n"
                      "<html><body "
                      "style='background:#111;color:red;text-align:center;"
                      "padding-top:20%%;'>"
@@ -147,13 +171,10 @@ int handle_hls_request(int client_fd,
             snprintf(
                 playlist_url, sizeof(playlist_url), "/%s/master.m3u8", hls_dir);
 
-            // Fetch track metadata to inject native HTML5 subtitle tags
             TrackInfo info = get_track_counts(abs_path);
-            char tracks_html[8192] =
-                "";    // Increased to safely hold multiple tracks
+            char tracks_html[8192] = "";
             for(int i = 0; i < info.subtitle_count; i++) {
-                char t_buf[PATH_MAX + 512];    // Increased to hold the maximum
-                                               // possible path length!
+                char t_buf[PATH_MAX + 512];
                 snprintf(t_buf,
                          sizeof(t_buf),
                          "<track src=\"/%s/sub_%d.vtt\" kind=\"subtitles\" "
@@ -165,57 +186,66 @@ int handle_hls_request(int client_fd,
                 strcat(tracks_html, t_buf);
             }
 
-            int n = snprintf(
-                resp,
-                sizeof(resp),
-                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nCache-Control: "
-                "no-cache\r\nConnection: close\r\n\r\n"
-                "<!DOCTYPE html><html><head><title>Play</title><script "
-                "src=\"https://cdn.jsdelivr.net/npm/hls.js@latest\"></script>"
-                "<style>body{background:#111;color:white;text-align:center;"
-                "font-family:sans-serif;} "
-                "select{padding:10px;margin:10px;background:#333;color:white;"
-                "border:1px solid #555;}</style></head>"
-                "<body><h2>%s</h2><div><label>Audio Track: <select "
-                "id='audioSelect'></select></label></div>"
-                "<video id='video' controls "
-                "style='width:80%%;max-width:1000px;margin-top:20px' "
-                "crossorigin='anonymous'>"
-                "%s"    // Inject native subtitle tracks here!
-                "</video>"
-                "<script>"
-                "var v=document.getElementById('video');var src='%s';"
-                "if(Hls.isSupported()){"
+            // Reverted to your clean HTML style and fixed Javascript naming
+            int n =
+                snprintf(resp,
+                         sizeof(resp),
+                         "HTTP/1.1 200 OK\r\nContent-Type: text/html; "
+                         "charset=utf-8\r\nCache-Control: "
+                         "no-cache\r\nConnection: close\r\n\r\n"
+                         "<!DOCTYPE "
+                         "html><html><head><title>Play</title><script "
+                         "src=\"https://cdn.jsdelivr.net/npm/hls.js@latest\"></"
+                         "script>"
+                         "<style>body{background:#111;color:white;text-align:"
+                         "center;font-family:sans-serif;} "
+                         "select{padding:10px;margin:10px;background:#333;"
+                         "color:white;border:1px solid #555;}</style></head>"
+                         "<body><h2>%s</h2><div><label>Audio Track: <select "
+                         "id='audioSelect'></select></label></div>"
+                         "<video id='video' controls "
+                         "style='width:80%%;max-width:1000px;margin-top:20px' "
+                         "crossorigin='anonymous'>"
+                         "%s"    // Inject native subtitle tracks here!
+                         "</video>"
+                         "<script>"
+                         "var v=document.getElementById('video');var src='%s';"
 
-                // 1. Tell HLS.js NOT to auto-load the Live Edge
-                "  var h=new Hls({autoStartLoad: false});"
-                "  h.loadSource(src);h.attachMedia(v);"
+                         // JavaScript Ping: Sends a heartbeat every 30 seconds
+                         "setInterval(function() { fetch('?mode=hls_ping'); }, "
+                         "30000);"
 
-                "  h.on(Hls.Events.MANIFEST_PARSED,function(){"
-                // 2. FORCE it to start downloading from 0:00
-                "    h.startLoad(0);"
-                "    v.play(); updateAudio();"
-                "  });"
-
-                "  h.on(Hls.Events.AUDIO_TRACKS_UPDATED, updateAudio);"
-                "  function updateAudio(){"
-                "    var as=document.getElementById('audioSelect'); "
-                "as.innerHTML='';"
-                "    h.audioTracks.forEach((t,i)=>{"
-                "      var o=document.createElement('option'); o.value=i;"
-                "      o.text=t.name||t.lang||'Track '+(i+1); "
-                "if(i===h.audioTrack) o.selected=true; as.add(o);"
-                "    });"
-                "  }"
-                "  "
-                "document.getElementById('audioSelect').onchange=function(){h."
-                "audioTrack=parseInt(this.value);};"
-                "}else "
-                "if(v.canPlayType('application/vnd.apple.mpegurl')){v.src=src;}"
-                "</script></body></html>",
-                abs_path,
-                tracks_html,
-                playlist_url);
+                         "if(Hls.isSupported()){"
+                         "  var h=new Hls({autoStartLoad: false});"
+                         "  h.loadSource(src);h.attachMedia(v);"
+                         "  h.on(Hls.Events.MANIFEST_PARSED,function(){"
+                         "    h.startLoad(0);"
+                         "    v.play(); updateAudio();"
+                         "  });"
+                         "  h.on(Hls.Events.AUDIO_TRACKS_UPDATED, updateAudio);"
+                         "  function updateAudio(){"
+                         "    var as=document.getElementById('audioSelect'); "
+                         "as.innerHTML='';"
+                         "    h.audioTracks.forEach((t,i)=>{"
+                         "      var o=document.createElement('option'); "
+                         "o.value=i;"
+                         "      var lang = t.lang || 'und';"
+                         "      o.text = 'Track ' + (i+1) + ' - [' + lang + "
+                         "']';"    // Perfect VLC naming!
+                         "      if(i===h.audioTrack) o.selected=true; "
+                         "as.add(o);"
+                         "    });"
+                         "  }"
+                         "  "
+                         "document.getElementById('audioSelect').onchange="
+                         "function(){h.audioTrack=parseInt(this.value);};"
+                         "}else "
+                         "if(v.canPlayType('application/"
+                         "vnd.apple.mpegurl')){v.src=src;}"
+                         "</script></body></html>",
+                         hls_folder_name,
+                         tracks_html,
+                         playlist_url);
 
             if(n > 0) write(client_fd, resp, n);
         }
@@ -243,9 +273,13 @@ void* janitor_worker(void* arg) {
                 struct stat st;
                 if(stat(access_file, &st) == 0) {
                     time_t now = time(NULL);
-                    if(now - st.st_mtime > 60) {
-                        printf("[Janitor] Connection lost. Cleaning up: %s\n",
-                               entry->d_name);
+
+                    // 1800 SECONDS = 30 MINUTES PAUSE TIMEOUT
+                    if(now - st.st_mtime > 1800) {
+                        printf(
+                            "[Janitor] Connection lost for 30 minutes. "
+                            "Cleaning up: %s\n",
+                            entry->d_name);
 
                         char pid_file[PATH_MAX];
                         snprintf(pid_file,

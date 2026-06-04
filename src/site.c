@@ -224,6 +224,7 @@ void* thread_fn(void* arg) {
                 DIR* dir = opendir(header.path);
                 struct dirent* dirent;
                 while((dirent = readdir(dir)) != NULL) {
+                    // We removed the 'continue' filter so everything is shown!
                     if(strcmp(dirent->d_name, ".") != 0 &&
                        strcmp(dirent->d_name, "..") != 0) {
                         char path[PATH_MAX], encoded[PATH_MAX * 3];
@@ -236,21 +237,31 @@ void* thread_fn(void* arg) {
                         }
                         urlencode(encoded, path);
 
-                        // Is this a video file?
-                        int is_video = (strstr(dirent->d_name, ".mkv") != NULL);
+                        // --- THE LOGIC REFINEMENT ---
+                        // 1. Is it a file that ends in .mkv?
+                        int is_mkv = (strstr(dirent->d_name, ".mkv") != NULL);
 
-                        // 1. Open List Item
+                        // 2. Is it a folder? (We don't want buttons on folders)
+                        struct stat st_entry;
+                        stat(path, &st_entry);
+                        int is_folder = S_ISDIR(st_entry.st_mode);
+
+                        // 3. Only show the button if it is an MKV AND NOT a
+                        // folder
+                        int show_stream_button = is_mkv && !is_folder;
+
+                        // 4. Open List Item
                         strcat(body, "<li>");
 
-                        // 2. The File Link
+                        // 5. The File Link
                         strcat(body, "<a href=\"/");
                         strcat(body, encoded);
                         strcat(body, "\">");
                         strcat(body, dirent->d_name);
                         strcat(body, "</a>");
 
-                        // 3. The Stream Button (Only if Video)
-                        if(is_video) {
+                        // 6. The Stream Button (Now strictly limited)
+                        if(show_stream_button) {
                             strcat(body, " <a href=\"/");
                             strcat(body, encoded);
                             strcat(body,
@@ -262,7 +273,7 @@ void* thread_fn(void* arg) {
                                    "</a>");
                         }
 
-                        // 4. Close List Item
+                        // 7. Close List Item
                         strcat(body, "</li>");
                     }
                 }
@@ -353,7 +364,33 @@ void getcontenttype(char* dest, const char* filename) {
         strcpy(dest, "application/octet-stream");
         return;
     }
-    if(strcmp(index, ".mkv") == 0) strcpy(dest, "video/mp4");
+
+    // Core Media
+    if(strcmp(index, ".mkv") == 0)
+        strcpy(dest, "video/mp4");    // Legacy raw mapping
+    else if(strcmp(index, ".mp4") == 0)
+        strcpy(dest, "video/mp4");
+
+    // HLS Streaming Essentials (CRITICAL for Safari/iOS support)
+    else if(strcmp(index, ".m3u8") == 0)
+        strcpy(dest, "application/vnd.apple.mpegurl");
+    else if(strcmp(index, ".ts") == 0)
+        strcpy(dest, "video/mp2t");
+    else if(strcmp(index, ".vtt") == 0)
+        strcpy(dest, "text/vtt");
+
+    // Standard Web Types
+    else if(strcmp(index, ".html") == 0)
+        strcpy(dest, "text/html; charset=utf-8");
+    else if(strcmp(index, ".css") == 0)
+        strcpy(dest, "text/css");
+    else if(strcmp(index, ".js") == 0)
+        strcpy(dest, "application/javascript");
+    else if(strcmp(index, ".png") == 0)
+        strcpy(dest, "image/png");
+    else if(strcmp(index, ".jpg") == 0 || strcmp(index, ".jpeg") == 0)
+        strcpy(dest, "image/jpeg");
+
     else
         strcpy(dest, "application/octet-stream");
 }
