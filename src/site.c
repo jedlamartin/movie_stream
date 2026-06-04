@@ -306,7 +306,33 @@ void getcontenttype(char* dest, const char* filename) {
         strcpy(dest, "application/octet-stream");
         return;
     }
-    if(strcmp(index, ".mkv") == 0) strcpy(dest, "video/mp4");
+
+    // Core Media
+    if(strcmp(index, ".mkv") == 0)
+        strcpy(dest, "video/mp4");    // Legacy raw mapping
+    else if(strcmp(index, ".mp4") == 0)
+        strcpy(dest, "video/mp4");
+
+    // HLS Streaming Essentials (CRITICAL for Safari/iOS support)
+    else if(strcmp(index, ".m3u8") == 0)
+        strcpy(dest, "application/vnd.apple.mpegurl");
+    else if(strcmp(index, ".ts") == 0)
+        strcpy(dest, "video/mp2t");
+    else if(strcmp(index, ".vtt") == 0)
+        strcpy(dest, "text/vtt");
+
+    // Standard Web Types
+    else if(strcmp(index, ".html") == 0)
+        strcpy(dest, "text/html; charset=utf-8");
+    else if(strcmp(index, ".css") == 0)
+        strcpy(dest, "text/css");
+    else if(strcmp(index, ".js") == 0)
+        strcpy(dest, "application/javascript");
+    else if(strcmp(index, ".png") == 0)
+        strcpy(dest, "image/png");
+    else if(strcmp(index, ".jpg") == 0 || strcmp(index, ".jpeg") == 0)
+        strcpy(dest, "image/jpeg");
+
     else
         strcpy(dest, "application/octet-stream");
 }
