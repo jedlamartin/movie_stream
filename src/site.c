@@ -111,6 +111,19 @@ void* thread_fn(void* arg) {
         } else {
             struct stat st;
             fstat(file_fd, &st);
+
+            if(S_ISDIR(st.st_mode)) {
+                char index_path[PATH_MAX];
+                snprintf(index_path,
+                         sizeof(index_path),
+                         "%s/index.html",
+                         header.path);
+                if(file_exists(index_path)) {
+                    close(file_fd);
+                    file_fd = open(index_path, O_RDONLY);
+                }
+            }
+
             if(S_ISREG(st.st_mode)) {
                 char resp[BUFFER_SIZE];
                 resp[0] = '\0';
