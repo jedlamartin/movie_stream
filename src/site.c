@@ -10,7 +10,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "ffmpeg_utils.h"
+#include "hls_manager.h"
 
 const char error_response[] =
     "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
@@ -22,88 +22,7 @@ void makeabsolute(char* dest, const char* src);
 void getcontenttype(char* dest, const char* filename);
 int getcontentrange(char* content, off_t* start, off_t* end);
 void normalizeranges(off_t* start, off_t* end, const off_t file_size);
-int check_or_start_hls(const char* mkv_path, char* out_hls_dir);
-int exists(const char* path);
-
-typedef struct {
-    char mkv_path[PATH_MAX];
-    char hls_dir[PATH_MAX];
-} ConversionTask;
-
-void* conversion_worker(void* arg) {
-    ConversionTask* task = (ConversionTask*) arg;
-    printf("[Worker] Starting: %s\n", task->mkv_path);
-
-    int ret = generate_hls_with_tracks(task->mkv_path, task->hls_dir);
-
-    // Remove the lock file to signal completion
-    char lock_file[PATH_MAX + 16];
-    snprintf(lock_file, sizeof(lock_file), "%s/.processing", task->hls_dir);
-    unlink(lock_file);    // Delete .processing
-
-    if(ret != 0) {
-        char error_file[PATH_MAX + 16];
-        snprintf(error_file, sizeof(error_file), "%s/error.txt", task->hls_dir);
-        FILE* f = fopen(error_file, "w");
-        if(f) {
-            fprintf(f, "Failed: %d\n", ret);
-            fclose(f);
-        }
-    } else {
-        printf("[Worker] Finished Successfully: %s\n", task->mkv_path);
-    }
-
-    free(task);
-    return NULL;
-}
-
-int check_or_start_hls(const char* mkv_path, char* out_hls_dir) {
-    snprintf(out_hls_dir, PATH_MAX, "%s.hls", mkv_path);
-
-    char master_pl[PATH_MAX];
-    snprintf(master_pl, sizeof(master_pl), "%s/master.m3u8", out_hls_dir);
-
-    char lock_file[PATH_MAX];
-    snprintf(lock_file, sizeof(lock_file), "%s/.processing", out_hls_dir);
-
-    if(exists(lock_file)) {
-        printf("[Manager] Found stale lock file. Cleaning up %s...\n",
-               out_hls_dir);
-        char cmd[PATH_MAX + 16];
-        snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", out_hls_dir);
-        system(cmd);
-    } else if(exists(out_hls_dir) && !exists(master_pl)) {
-        printf("[Manager] Found corrupt folder. Cleaning up %s...\n",
-               out_hls_dir);
-        char cmd[PATH_MAX + 16];
-        snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", out_hls_dir);
-        system(cmd);
-    } else if(exists(master_pl)) {
-        return 0;
-    }
-
-#ifdef _WIN32
-    _mkdir(out_hls_dir);
-#else
-    mkdir(out_hls_dir, 0755);
-#endif
-
-    FILE* f = fopen(lock_file, "w");
-    if(f) fclose(f);
-
-    ConversionTask* task = malloc(sizeof(ConversionTask));
-    if(!task) return -1;
-    snprintf(task->mkv_path, PATH_MAX, "%s", mkv_path);
-    snprintf(task->hls_dir, PATH_MAX, "%s", out_hls_dir);
-
-    pthread_t thread;
-    if(pthread_create(&thread, NULL, conversion_worker, task) == 0) {
-        pthread_detach(thread);
-        return 1;    // Processing
-    }
-    free(task);
-    return -1;
-}
+int file_exists(const char* path);
 
 void* thread_fn(void* arg) {
     int client_fd = *((int*) arg);
@@ -119,7 +38,6 @@ void* thread_fn(void* arg) {
             pthread_exit((void*) 1);
         }
         buffer[read_bytes] = '\0';
-        // printf("Request:\n%s\n", buffer); // <-- REMOVED LOGGING
 
         if(!strstr(buffer, "\r\n\r\n")) {
             close(client_fd);
@@ -199,136 +117,34 @@ void* thread_fn(void* arg) {
                 char content_type_str[256];
                 getcontenttype(content_type_str, header.path);
 
-                if(strstr(content_type_str, "video") &&
-                   strstr(header.path, ".mkv") && !header.range_request &&
-                   strcmp(header.query, "mode=hls") == 0) {
-                    char hls_dir[PATH_MAX];
-                    int status = check_or_start_hls(header.path, hls_dir);
+                // If the user is requesting an HLS chunk, update the .access
+                // file!
+                char* hls_ext = strstr(header.path, ".hls/");
+                if(hls_ext) {
+                    char access_file[PATH_MAX];
+                    int dir_len = (hls_ext - header.path) +
+                                  4;    // Get length up to ".hls"
+                    snprintf(access_file,
+                             sizeof(access_file),
+                             "%.*s/.access",
+                             dir_len,
+                             header.path);
 
-                    if(status == 1) {    // PROCESSING
-                        snprintf(
-                            resp,
-                            sizeof(resp),
-                            "HTTP/1.1 200 OK\r\nContent-Type: "
-                            "text/html\r\nConnection: close\r\n\r\n"
-                            "<html><head><meta http-equiv='refresh' "
-                            "content='5'></head><body "
-                            "style='background:#111;color:white;text-align:"
-                            "center;padding-top:20%%;font-family:sans-"
-                            "serif;'>"
-                            "<h1>Processing Video...</h1><p>Please "
-                            "wait...</p></body></html>");
-                        write(client_fd, resp, strlen(resp));
-                        close(file_fd);
-                        free_list(header.headers);
-                        close(client_fd);
-                        pthread_exit(NULL);
-                    } else if(status == -1) {    // ERROR
-                        snprintf(
-                            resp,
-                            sizeof(resp),
-                            "HTTP/1.1 500 Error\r\nContent-Type: "
-                            "text/html\r\nConnection: close\r\n\r\n"
-                            "<html><body "
-                            "style='background:#111;color:red;text-align:"
-                            "center;font-family:sans-serif;padding-top:20%%"
-                            ";'>"
-                            "<h1>Conversion Failed</h1><p>Check server "
-                            "logs.</p></body></html>");
-                        write(client_fd, resp, strlen(resp));
-                        close(file_fd);
-                        free_list(header.headers);
-                        close(client_fd);
-                        pthread_exit(NULL);
-                    } else {    // READY
-                        char playlist_url[PATH_MAX + 128];
-                        snprintf(playlist_url,
-                                 sizeof(playlist_url),
-                                 "/%s/master.m3u8",
-                                 hls_dir);
-                        char html_resp[BUFFER_SIZE * 4];
-                        int n = snprintf(
-                            html_resp,
-                            sizeof(html_resp),
-                            "HTTP/1.1 200 OK\r\n"
-                            "Content-Type: text/html\r\n"
-                            "Cache-Control: no-cache, no-store, "
-                            "must-revalidate\r\n"
-                            "Connection: close\r\n\r\n"
-                            "<!DOCTYPE "
-                            "html><html><head><title>Play</title><script "
-                            "src=\"https://cdn.jsdelivr.net/npm/"
-                            "hls.js@latest\"></script>"
-                            "<style>body{background:#111;color:white;text-"
-                            "align:center;font-family:sans-serif;} "
-                            "select{padding:10px;margin:10px;background:#"
-                            "333;"
-                            "color:white;border:1px solid "
-                            "#555;}</style></head>"
-                            "<body><h2>%s</h2><div><label>Audio: <select "
-                            "id='audioSelect'></select></"
-                            "label><label>Subs: "
-                            "<select id='subSelect'></select></label></div>"
-                            "<video id='video' controls "
-                            "style='width:80%%;max-width:1000px;margin-top:"
-                            "20px'></video>"
-                            "<script>"
-                            "var v=document.getElementById('video');var "
-                            "src='%s';"
-                            "if(Hls.isSupported()){var h=new "
-                            "Hls();h.loadSource(src);h.attachMedia(v);"
-                            "h.on(Hls.Events.MANIFEST_PARSED,function(){v."
-                            "play("
-                            ");updateTracks();});"
-                            "h.on(Hls.Events.AUDIO_TRACKS_UPDATED, "
-                            "updateTracks);"
-                            "h.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, "
-                            "updateTracks);"
-                            "function updateTracks(){"
-                            "var "
-                            "as=document.getElementById('audioSelect');as."
-                            "innerHTML='';"
-                            "h.audioTracks.forEach((t,i)=>{var "
-                            "o=document.createElement('option');o.value=i;"
-                            "o."
-                            "text=t.name||t.lang||'Track "
-                            "'+(i+1);if(i===h.audioTrack)o.selected=true;"
-                            "as."
-                            "add(o);});"
-                            "var "
-                            "ss=document.getElementById('subSelect');ss."
-                            "innerHTML='';"
-                            "var "
-                            "off=document.createElement('option');off."
-                            "value=-1;"
-                            "off.text='Off';if(h.subtitleTrack===-1)off."
-                            "selected=true;ss.add(off);"
-                            "h.subtitleTracks.forEach((t,i)=>{var "
-                            "o=document.createElement('option');o.value=i;"
-                            "o."
-                            "text=t.name||t.lang||'Sub "
-                            "'+(i+1);if(i===h.subtitleTrack)o.selected="
-                            "true;ss."
-                            "add(o);});}"
-                            "document.getElementById('audioSelect')."
-                            "onchange="
-                            "function(){h.audioTrack=parseInt(this.value);}"
-                            ";"
-                            "document.getElementById('subSelect').onchange="
-                            "function(){h.subtitleTrack=parseInt(this."
-                            "value);};"
-                            "}else "
-                            "if(v.canPlayType('application/"
-                            "vnd.apple.mpegurl')){v.src=src;}"
-                            "</script></body></html>",
-                            header.path,
-                            playlist_url);
-                        if(n > 0) write(client_fd, html_resp, n);
-                        close(file_fd);
-                        free_list(header.headers);
-                        close(client_fd);
-                        pthread_exit(NULL);
-                    }
+                    // Open and immediately close the file to update its 'Last
+                    // Modified' time
+                    FILE* f = fopen(access_file, "w");
+                    if(f) fclose(f);
+                }
+
+                // Pass the request to the HLS Manager.
+                // If it handles the request, we close the socket and exit the
+                // thread.
+                if(handle_hls_request(
+                       client_fd, &header, header.path, content_type_str)) {
+                    close(file_fd);
+                    free_list(header.headers);
+                    close(client_fd);
+                    pthread_exit(NULL);
                 }
 
                 if(header.range_request) {
@@ -490,6 +306,7 @@ void urldecode(char* dst, const char* src) {
     }
     *dst++ = '\0';
 }
+
 void urlencode(char* dest, const char* src) {
     const char* hex = "0123456789abcdef";
     int pos = 0;
@@ -507,6 +324,7 @@ void urlencode(char* dest, const char* src) {
     }
     dest[pos] = '\0';
 }
+
 void makeabsolute(char* dest, const char* src) {
     const char* start = src;
     const char* end = strchr(start, '/');
@@ -528,8 +346,9 @@ void makeabsolute(char* dest, const char* src) {
         }
     }
 }
+
 void getcontenttype(char* dest, const char* filename) {
-    char* index = strrchr(filename, '.');
+    const char* index = strrchr(filename, '.');
     if(!index) {
         strcpy(dest, "application/octet-stream");
         return;
@@ -538,6 +357,7 @@ void getcontenttype(char* dest, const char* filename) {
     else
         strcpy(dest, "application/octet-stream");
 }
+
 int getcontentrange(char* content, off_t* start, off_t* end) {
     char* p = strstr(content, "bytes=");
     if(!p) return -1;
@@ -554,12 +374,14 @@ int getcontentrange(char* content, off_t* start, off_t* end) {
         *end = -1;
     return 0;
 }
+
 void normalizeranges(off_t* start, off_t* end, const off_t file_size) {
     if(*end == -1) *end = file_size - 1;
     if(*start < 0) *start = 0;
     if(*end >= file_size) *end = file_size - 1;
 }
-int exists(const char* path) {
+
+int file_exists(const char* path) {
     struct stat st;
     return stat(path, &st) == 0;
 }

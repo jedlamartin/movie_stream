@@ -8,6 +8,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -69,4 +70,6 @@ typedef struct Header {
  */
 void* thread_fn(void* arg);
 
+// Utility function to check if a file/folder exists
+int file_exists(const char* path);
 #endif

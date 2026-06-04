@@ -10,6 +10,7 @@ set(SOURCES
     src/site.c
     src/list.c
     src/ffmpeg_utils.c
+    src/hls_manager.c
 )
 
 add_executable(movie_stream ${SOURCES})

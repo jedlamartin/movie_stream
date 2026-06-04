@@ -183,26 +183,25 @@ static int run_ffmpeg_command(const char* mkv_path,
     strcat(var_stream_map, "v:0,agroup:audio");
     if(include_subs) strcat(var_stream_map, ",sgroup:subs");
 
-    // COMMAND (Restored > /dev/null 2>&1 to be silent)
     snprintf(cmd,
              sizeof(cmd),
              "ffmpeg -i \"%s\" %s "
              "-c:v copy -c:a aac %s "
              "-f hls -hls_time 10 -hls_list_size 0 "
-             "-hls_playlist_type vod "
+             "-hls_playlist_type event "
              "-hls_flags independent_segments "
              "-hls_segment_filename \"%s/segment_%%v_%%03d.ts\" "
              "-master_pl_name master.m3u8 "
              "-var_stream_map \"%s\" "
-             "\"%s/stream_%%v.m3u8\" > /dev/null 2>&1",
+             "\"%s/stream_%%v.m3u8\" > /dev/null 2>&1 & "
+             "PID=$!; echo $PID > \"%s/.pid\"; wait $PID",
              abs_mkv_path,
              map_args,
              include_subs ? "-c:s webvtt" : "",
              hls_dir,
              var_stream_map,
+             hls_dir,
              hls_dir);
-
-    // Removed the printf("[DEBUG] Command: ...")
 
     return system(cmd);
 }
