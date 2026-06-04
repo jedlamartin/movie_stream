@@ -15,11 +15,6 @@ Movie Stream is a minimal, concurrent HTTP/1.1 server written in C. It is design
 
 *   C compiler (e.g., gcc or clang)
 *   CMake >= 3.10
-*   FFmpeg Development Libraries:
-    * `libavcodec-dev`
-    * `libavformat-dev`
-    * `libavutil-dev`
-    * `libswscale-dev`
 *   POSIX-compliant operating system (Linux, macOS, etc.)
 
 
