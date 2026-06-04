@@ -113,7 +113,7 @@ void* thread_fn(void* arg) {
             fstat(file_fd, &st);
 
             if(S_ISDIR(st.st_mode)) {
-                char index_path[PATH_MAX];
+                char index_path[PATH_MAX + 16];
                 snprintf(index_path,
                          sizeof(index_path),
                          "%s/index.html",
