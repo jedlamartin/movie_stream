@@ -11,6 +11,7 @@
 typedef struct {
     char lang[4];
     char title[64];
+    int index;    // <-- Track the absolute FFmpeg stream index (0:s:X)
 } StreamMeta;
 
 typedef struct {
