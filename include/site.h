@@ -8,6 +8,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -20,7 +21,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "ffmpeg_utils.h"
 #include "list.h"
 
 /**
