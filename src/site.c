@@ -112,53 +112,63 @@ void* thread_fn(void* arg) {
             struct stat st;
             fstat(file_fd, &st);
 
-            int is_index = 0;
+            // === 302 REDIRECT ÉS INDEX.HTML LOGIKA ===
             if(S_ISDIR(st.st_mode)) {
                 char index_path[PATH_MAX + 16];
                 snprintf(index_path,
                          sizeof(index_path),
                          "%s/index.html",
                          header.path);
-                if(file_exists(index_path)) {
-                    close(file_fd);
-                    file_fd = open(index_path, O_RDONLY);
 
-                    fstat(file_fd, &st);
-                    is_index = 1;
+                if(file_exists(index_path)) {
+                    // Ha nincs perjel a mappa végén, küldjük a 302-es
+                    // átirányítást
+                    if(header.path[strlen(header.path) - 1] != '/') {
+                        char redirect_resp[BUFFER_SIZE];
+                        snprintf(redirect_resp,
+                                 sizeof(redirect_resp),
+                                 "HTTP/1.1 302 Found\r\n"
+                                 "Location: /%s/\r\n"
+                                 "Connection: close\r\n\r\n",
+                                 header.path);
+                        write(client_fd, redirect_resp, strlen(redirect_resp));
+                        close(file_fd);
+                        free_list(header.headers);
+                        close(client_fd);
+                        pthread_exit(NULL);
+                    } else {
+                        // Ha van perjel, betöltjük az index.html-t fájlként
+                        close(file_fd);
+                        strcpy(header.path, index_path);
+                        file_fd = open(header.path, O_RDONLY);
+                        fstat(file_fd, &st);    // Frissíti a stat-ot S_ISREG-re
+                    }
                 }
             }
+            // =========================================
+
             if(S_ISREG(st.st_mode)) {
                 char resp[BUFFER_SIZE];
                 resp[0] = '\0';
                 char content_type_str[256];
-                if(is_index) {
-                    strcpy(content_type_str, "text/html; charset=utf-8");
-                } else {
-                    getcontenttype(content_type_str, header.path);
-                }
+                getcontenttype(content_type_str, header.path);
 
-                // If the user is requesting an HLS chunk, update the .access
-                // file!
+                // Ha HLS chunkot kértek, frissítjük a .access fájlt
                 char* hls_ext = strstr(header.path, ".hls/");
                 if(hls_ext) {
                     char access_file[PATH_MAX];
-                    int dir_len = (hls_ext - header.path) +
-                                  4;    // Get length up to ".hls"
+                    int dir_len = (hls_ext - header.path) + 4;
                     snprintf(access_file,
                              sizeof(access_file),
                              "%.*s/.access",
                              dir_len,
                              header.path);
 
-                    // Open and immediately close the file to update its 'Last
-                    // Modified' time
                     FILE* f = fopen(access_file, "w");
                     if(f) fclose(f);
                 }
 
-                // Pass the request to the HLS Manager.
-                // If it handles the request, we close the socket and exit the
-                // thread.
+                // HLS Manager
                 if(handle_hls_request(
                        client_fd, &header, header.path, content_type_str)) {
                     close(file_fd);
@@ -231,7 +241,6 @@ void* thread_fn(void* arg) {
                 const char html_prefix[] =
                     "<h1>Directory Listing</h1>Directory: ";
 
-                // --- RESTORED TO ORIGINAL LIST FORMAT ---
                 const char list_begin[] = "<hr><ul>";
                 const char list_end[] = "</ul><hr>";
 
@@ -244,7 +253,6 @@ void* thread_fn(void* arg) {
                 DIR* dir = opendir(header.path);
                 struct dirent* dirent;
                 while((dirent = readdir(dir)) != NULL) {
-                    // We removed the 'continue' filter so everything is shown!
                     if(strcmp(dirent->d_name, ".") != 0 &&
                        strcmp(dirent->d_name, "..") != 0) {
                         char path[PATH_MAX], encoded[PATH_MAX * 3];
@@ -257,30 +265,22 @@ void* thread_fn(void* arg) {
                         }
                         urlencode(encoded, path);
 
-                        // --- THE LOGIC REFINEMENT ---
-                        // 1. Is it a file that ends in .mkv?
                         int is_mkv = (strstr(dirent->d_name, ".mkv") != NULL);
 
-                        // 2. Is it a folder? (We don't want buttons on folders)
                         struct stat st_entry;
                         stat(path, &st_entry);
                         int is_folder = S_ISDIR(st_entry.st_mode);
 
-                        // 3. Only show the button if it is an MKV AND NOT a
-                        // folder
                         int show_stream_button = is_mkv && !is_folder;
 
-                        // 4. Open List Item
                         strcat(body, "<li>");
 
-                        // 5. The File Link
                         strcat(body, "<a href=\"/");
                         strcat(body, encoded);
                         strcat(body, "\">");
                         strcat(body, dirent->d_name);
                         strcat(body, "</a>");
 
-                        // 6. The Stream Button (Now strictly limited)
                         if(show_stream_button) {
                             strcat(body, " <a href=\"/");
                             strcat(body, encoded);
@@ -293,7 +293,6 @@ void* thread_fn(void* arg) {
                                    "</a>");
                         }
 
-                        // 7. Close List Item
                         strcat(body, "</li>");
                     }
                 }
@@ -385,21 +384,15 @@ void getcontenttype(char* dest, const char* filename) {
         return;
     }
 
-    // Core Media
-    if(strcmp(index, ".mkv") == 0)
-        strcpy(dest, "video/mp4");    // Legacy raw mapping
+    if(strcmp(index, ".mkv") == 0) strcpy(dest, "video/mp4");
     else if(strcmp(index, ".mp4") == 0)
         strcpy(dest, "video/mp4");
-
-    // HLS Streaming Essentials (CRITICAL for Safari/iOS support)
     else if(strcmp(index, ".m3u8") == 0)
         strcpy(dest, "application/vnd.apple.mpegurl");
     else if(strcmp(index, ".ts") == 0)
         strcpy(dest, "video/mp2t");
     else if(strcmp(index, ".vtt") == 0)
         strcpy(dest, "text/vtt");
-
-    // Standard Web Types
     else if(strcmp(index, ".html") == 0)
         strcpy(dest, "text/html; charset=utf-8");
     else if(strcmp(index, ".css") == 0)
@@ -410,7 +403,6 @@ void getcontenttype(char* dest, const char* filename) {
         strcpy(dest, "image/png");
     else if(strcmp(index, ".jpg") == 0 || strcmp(index, ".jpeg") == 0)
         strcpy(dest, "image/jpeg");
-
     else
         strcpy(dest, "application/octet-stream");
 }
