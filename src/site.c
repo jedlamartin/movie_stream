@@ -112,6 +112,7 @@ void* thread_fn(void* arg) {
             struct stat st;
             fstat(file_fd, &st);
 
+            int is_index = 0;
             if(S_ISDIR(st.st_mode)) {
                 char index_path[PATH_MAX + 16];
                 snprintf(index_path,
@@ -121,14 +122,20 @@ void* thread_fn(void* arg) {
                 if(file_exists(index_path)) {
                     close(file_fd);
                     file_fd = open(index_path, O_RDONLY);
+
+                    fstat(file_fd, &st);
+                    is_index = 1;
                 }
             }
-
             if(S_ISREG(st.st_mode)) {
                 char resp[BUFFER_SIZE];
                 resp[0] = '\0';
                 char content_type_str[256];
-                getcontenttype(content_type_str, header.path);
+                if(is_index) {
+                    strcpy(content_type_str, "text/html; charset=utf-8");
+                } else {
+                    getcontenttype(content_type_str, header.path);
+                }
 
                 // If the user is requesting an HLS chunk, update the .access
                 // file!
