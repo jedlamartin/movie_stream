@@ -117,7 +117,7 @@ void* thread_fn(void* arg) {
                          sizeof(index_path),
                          "%s/index.html",
                          header.path);
-                if(file_exists(index_path)) {
+                if(exists(index_path)) {
                     close(file_fd);
                     file_fd = open(index_path, O_RDONLY);
                 }
