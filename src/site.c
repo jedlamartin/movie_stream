@@ -117,9 +117,27 @@ void* thread_fn(void* arg) {
                          sizeof(index_path),
                          "%s/index.html",
                          header.path);
-                if(exists(index_path)) {
-                    close(file_fd);
-                    file_fd = open(index_path, O_RDONLY);
+
+                if(file_exists(index_path)) {
+                    if(header.path[strlen(header.path) - 1] != '/') {
+                        char redirect_resp[BUFFER_SIZE];
+                        snprintf(redirect_resp,
+                                 sizeof(redirect_resp),
+                                 "HTTP/1.1 302 Found\r\n"
+                                 "Location: /%s/\r\n"
+                                 "Connection: close\r\n\r\n",
+                                 header.path);
+                        write(client_fd, redirect_resp, strlen(redirect_resp));
+                        close(file_fd);
+                        free_list(header.headers);
+                        close(client_fd);
+                        pthread_exit(NULL);
+                    } else {
+                        close(file_fd);
+                        strcpy(header.path, index_path);
+                        file_fd = open(header.path, O_RDONLY);
+                        fstat(file_fd, &st);
+                    }
                 }
             }
 
