@@ -130,8 +130,6 @@ int generate_hls_with_tracks(const char* mkv_path, const char* hls_dir) {
     if(!realpath(mkv_path, abs_mkv_path)) strcpy(abs_mkv_path, mkv_path);
 
     // 1. SIDECAR SUBTITLE EXTRACTION
-    // We launch fast, independent background processes to extract each subtitle
-    // track to a standalone .vtt file.
     for(int i = 0; i < info.subtitle_count; i++) {
         char sub_cmd[PATH_MAX + 256];
         snprintf(sub_cmd,
@@ -150,9 +148,12 @@ int generate_hls_with_tracks(const char* mkv_path, const char* hls_dir) {
     char var_stream_map[4096] = "v:0,agroup:audio ";
 
     for(int i = 0; i < info.audio_count; i++) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), " -map 0:a:%d", i);
+        char buf[128];
+        // FIX 1: Added "-ac:a:%d 2" to force downmixing 5.1/7.1 audio to
+        // 2-channel stereo
+        snprintf(buf, sizeof(buf), " -map 0:a:%d -ac:a:%d 2", i, i);
         strcat(map_args, buf);
+
         char vsm_buf[256];
         snprintf(vsm_buf,
                  sizeof(vsm_buf),
@@ -168,7 +169,8 @@ int generate_hls_with_tracks(const char* mkv_path, const char* hls_dir) {
     snprintf(cmd,
              sizeof(cmd),
              "ffmpeg -i \"%s\" %s "
-             "-c:v copy -tag:v hvc1 -c:a aac "
+             // FIX 2: Added "-b:a 128k" for stable audio streaming bandwidth
+             "-c:v copy -tag:v hvc1 -c:a aac -b:a 128k "
              "-f hls -hls_time 10 -hls_list_size 0 "
              "-hls_flags independent_segments "
              "-master_pl_name master.m3u8 "

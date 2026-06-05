@@ -121,6 +121,9 @@ void* thread_fn(void* arg) {
                 if(file_exists(index_path)) {
                     close(file_fd);
                     file_fd = open(index_path, O_RDONLY);
+                    fstat(file_fd, &st);    // Ensures S_ISREG triggers below
+                    strcpy(header.path,
+                           index_path);    // Ensures correct MIME type
                 }
             }
 
