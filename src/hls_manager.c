@@ -38,12 +38,12 @@ void* conversion_worker(void* arg) {
 
     int ret = generate_hls_with_tracks(task->mkv_path, task->hls_dir);
 
-    char lock_file[PATH_MAX + 16];
+    char lock_file[PATH_MAX + 32];
     snprintf(lock_file, sizeof(lock_file), "%s/.processing", task->hls_dir);
     unlink(lock_file);
 
     if(ret != 0) {
-        char error_file[PATH_MAX + 16];
+        char error_file[PATH_MAX + 32];
         snprintf(error_file, sizeof(error_file), "%s/error.txt", task->hls_dir);
         FILE* f = fopen(error_file, "w");
         if(f) {
@@ -61,22 +61,21 @@ void* conversion_worker(void* arg) {
 int check_or_start_hls(const char* mkv_path, char* out_hls_dir) {
     snprintf(out_hls_dir, PATH_MAX, "%s.hls", mkv_path);
 
-    char master_pl[PATH_MAX];
+    char master_pl[PATH_MAX + 32];
     snprintf(master_pl, sizeof(master_pl), "%s/master.m3u8", out_hls_dir);
 
-    char lock_file[PATH_MAX];
+    char lock_file[PATH_MAX + 32];
     snprintf(lock_file, sizeof(lock_file), "%s/.processing", out_hls_dir);
 
-    char error_file[PATH_MAX];
+    char error_file[PATH_MAX + 32];
     snprintf(error_file, sizeof(error_file), "%s/error.txt", out_hls_dir);
 
     if(file_exists(error_file)) return -1;
     if(file_exists(master_pl) && has_any_ts_file(out_hls_dir)) return 0;
     if(file_exists(lock_file)) return 1;
 
-    // If folder exists but is corrupt/incomplete, kill FFmpeg before deleting
     if(file_exists(out_hls_dir)) {
-        char pid_file[PATH_MAX];
+        char pid_file[PATH_MAX + 32];
         snprintf(pid_file, sizeof(pid_file), "%s/.pid", out_hls_dir);
         FILE* pf = fopen(pid_file, "r");
         if(pf) {
@@ -102,7 +101,7 @@ int check_or_start_hls(const char* mkv_path, char* out_hls_dir) {
     FILE* f = fopen(lock_file, "w");
     if(f) fclose(f);
 
-    char access_file[PATH_MAX];
+    char access_file[PATH_MAX + 32];
     snprintf(access_file, sizeof(access_file), "%s/.access", out_hls_dir);
     FILE* af = fopen(access_file, "w");
     if(af) fclose(af);
@@ -125,16 +124,13 @@ int handle_hls_request(int client_fd,
                        Header* header,
                        const char* abs_path,
                        const char* content_type_str) {
-    // 1. THE HEARTBEAT PING LISTENER (Prevents deletion when paused)
     if(strcmp(header->query, "mode=hls_ping") == 0) {
-        char hls_dir[PATH_MAX];
+        char hls_dir[PATH_MAX + 16];
         snprintf(hls_dir, sizeof(hls_dir), "%s.hls", abs_path);
 
         char access_file[PATH_MAX + 32];
         snprintf(access_file, sizeof(access_file), "%s/.access", hls_dir);
 
-        // This "touches" the file, updating its modified time so the Janitor
-        // resets its countdown
         FILE* f = fopen(access_file, "w");
         if(f) fclose(f);
 
@@ -143,7 +139,6 @@ int handle_hls_request(int client_fd,
         return 1;
     }
 
-    // 2. THE MAIN STREAM LISTENER
     if(strstr(content_type_str, "video") && strstr(abs_path, ".mkv") &&
        !header->range_request && strcmp(header->query, "mode=hls") == 0) {
         char hls_dir[PATH_MAX];
@@ -275,21 +270,21 @@ void* janitor_worker(void* arg) {
         while(fgets(hls_dir, sizeof(hls_dir), fp) != NULL) {
             hls_dir[strcspn(hls_dir, "\r\n")] = 0;    // Strip newline
 
-            char access_file[PATH_MAX];
+            char access_file[PATH_MAX + 32];
             snprintf(access_file, sizeof(access_file), "%s/.access", hls_dir);
 
             struct stat st;
             if(stat(access_file, &st) == 0) {
                 time_t now = time(NULL);
 
-                // 1800 SECONDS = 30 MINUTES PAUSE TIMEOUT
                 if(now - st.st_mtime > 1800) {
                     printf(
                         "[Janitor] Connection lost for 30 minutes. Cleaning "
                         "up: %s\n",
                         hls_dir);
 
-                    char pid_file[PATH_MAX];
+                    // FIX: Buffer increased here too
+                    char pid_file[PATH_MAX + 32];
                     snprintf(pid_file, sizeof(pid_file), "%s/.pid", hls_dir);
                     FILE* pf = fopen(pid_file, "r");
                     if(pf) {

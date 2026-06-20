@@ -110,6 +110,8 @@ int main(int argc, char* argv[]) {
             free(client_fd);
             exit(1);
         }
+
+        pthread_detach(thread);
     }
     return 0;
 }
