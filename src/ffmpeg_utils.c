@@ -169,7 +169,8 @@ int generate_hls_with_tracks(const char* mkv_path, const char* hls_dir) {
     snprintf(cmd,
              sizeof(cmd),
              "ffmpeg -i \"%s\" %s "
-             "-c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 128k "
+             "-c:v libx264 -preset ultrafast -pix_fmt yuv420p -crf 23 -c:a aac "
+             "-b:a 128k "
              "-f hls -hls_segment_type fmp4 -hls_time 10 -hls_list_size 0 "
              "-hls_flags independent_segments "
              "-master_pl_name master.m3u8 "
