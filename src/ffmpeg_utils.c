@@ -135,7 +135,7 @@ int generate_hls_with_tracks(const char* mkv_path, const char* hls_dir) {
         snprintf(sub_cmd,
                  sizeof(sub_cmd),
                  "ffmpeg -y -i \"%s\" -map 0:s:%d -f webvtt \"%s/sub_%d.vtt\" "
-                 "> /dev/null 2>&1 &",
+                 "> /dev/null 2>&1",
                  abs_mkv_path,
                  info.subs[i].index,
                  hls_dir,
