@@ -23,7 +23,8 @@ int has_any_ts_file(const char* dir_path) {
     struct dirent* entry;
     int found = 0;
     while((entry = readdir(dir)) != NULL) {
-        if(strstr(entry->d_name, ".ts") != NULL) {
+        if(strstr(entry->d_name, ".ts") != NULL ||
+           strstr(entry->d_name, ".m4s") != NULL) {
             found = 1;
             break;
         }

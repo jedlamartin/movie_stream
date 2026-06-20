@@ -169,9 +169,9 @@ int generate_hls_with_tracks(const char* mkv_path, const char* hls_dir) {
     snprintf(cmd,
              sizeof(cmd),
              "ffmpeg -i \"%s\" %s "
-             // FIX 2: Added "-b:a 128k" for stable audio streaming bandwidth
              "-c:v copy -tag:v hvc1 -c:a aac -b:a 128k "
-             "-f hls -hls_time 10 -hls_list_size 0 "
+             // FIX: Added "-hls_segment_type fmp4" here:
+             "-f hls -hls_segment_type fmp4 -hls_time 10 -hls_list_size 0 "
              "-hls_flags independent_segments "
              "-master_pl_name master.m3u8 "
              "-var_stream_map \"%s\" "
