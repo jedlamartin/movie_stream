@@ -387,6 +387,10 @@ void getcontenttype(char* dest, const char* filename) {
     if(strcmp(index, ".mkv") == 0) strcpy(dest, "video/mp4");
     else if(strcmp(index, ".mp4") == 0)
         strcpy(dest, "video/mp4");
+
+    else if(strcmp(index, ".m4s") == 0)
+        strcpy(dest, "video/mp4");
+
     else if(strcmp(index, ".m3u8") == 0)
         strcpy(dest, "application/vnd.apple.mpegurl");
     else if(strcmp(index, ".ts") == 0)
