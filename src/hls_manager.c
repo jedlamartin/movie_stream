@@ -74,17 +74,30 @@ int check_or_start_hls(const char* mkv_path, char* out_hls_dir) {
     if(file_exists(master_pl) && has_any_ts_file(out_hls_dir)) return 0;
     if(file_exists(lock_file)) return 1;
 
+    // If folder exists but is corrupt/incomplete, kill FFmpeg before deleting
     if(file_exists(out_hls_dir)) {
+        char pid_file[PATH_MAX];
+        snprintf(pid_file, sizeof(pid_file), "%s/.pid", out_hls_dir);
+        FILE* pf = fopen(pid_file, "r");
+        if(pf) {
+            int pid = 0;
+            if(fscanf(pf, "%d", &pid) == 1 && pid > 0) {
+                char kill_cmd[64];
+                snprintf(kill_cmd,
+                         sizeof(kill_cmd),
+                         "kill -9 %d > /dev/null 2>&1",
+                         pid);
+                system(kill_cmd);
+            }
+            fclose(pf);
+        }
+
         char cmd[PATH_MAX + 16];
         snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", out_hls_dir);
         system(cmd);
     }
 
-#ifdef _WIN32
-    _mkdir(out_hls_dir);
-#else
     mkdir(out_hls_dir, 0755);
-#endif
 
     FILE* f = fopen(lock_file, "w");
     if(f) fclose(f);
@@ -186,7 +199,6 @@ int handle_hls_request(int client_fd,
                 strcat(tracks_html, t_buf);
             }
 
-            // Reverted to your clean HTML style and fixed Javascript naming
             int n =
                 snprintf(resp,
                          sizeof(resp),
@@ -206,15 +218,12 @@ int handle_hls_request(int client_fd,
                          "<video id='video' controls "
                          "style='width:80%%;max-width:1000px;margin-top:20px' "
                          "crossorigin='anonymous'>"
-                         "%s"    // Inject native subtitle tracks here!
+                         "%s"
                          "</video>"
                          "<script>"
                          "var v=document.getElementById('video');var src='%s';"
-
-                         // JavaScript Ping: Sends a heartbeat every 30 seconds
                          "setInterval(function() { fetch('?mode=hls_ping'); }, "
                          "30000);"
-
                          "if(Hls.isSupported()){"
                          "  var h=new Hls({autoStartLoad: false});"
                          "  h.loadSource(src);h.attachMedia(v);"
@@ -231,7 +240,7 @@ int handle_hls_request(int client_fd,
                          "o.value=i;"
                          "      var lang = t.lang || 'und';"
                          "      o.text = 'Track ' + (i+1) + ' - [' + lang + "
-                         "']';"    // Perfect VLC naming!
+                         "']';"
                          "      if(i===h.audioTrack) o.selected=true; "
                          "as.add(o);"
                          "    });"
@@ -258,59 +267,51 @@ void* janitor_worker(void* arg) {
     (void) arg;
     while(1) {
         sleep(10);
-        DIR* dir = opendir(".");
-        if(!dir) continue;
 
-        struct dirent* entry;
-        while((entry = readdir(dir)) != NULL) {
-            if(strstr(entry->d_name, ".hls") != NULL) {
-                char access_file[PATH_MAX];
-                snprintf(access_file,
-                         sizeof(access_file),
-                         "%s/.access",
-                         entry->d_name);
+        FILE* fp = popen("find . -type d -name \"*.hls\"", "r");
+        if(!fp) continue;
 
-                struct stat st;
-                if(stat(access_file, &st) == 0) {
-                    time_t now = time(NULL);
+        char hls_dir[PATH_MAX];
+        while(fgets(hls_dir, sizeof(hls_dir), fp) != NULL) {
+            hls_dir[strcspn(hls_dir, "\r\n")] = 0;    // Strip newline
 
-                    // 1800 SECONDS = 30 MINUTES PAUSE TIMEOUT
-                    if(now - st.st_mtime > 1800) {
-                        printf(
-                            "[Janitor] Connection lost for 30 minutes. "
-                            "Cleaning up: %s\n",
-                            entry->d_name);
+            char access_file[PATH_MAX];
+            snprintf(access_file, sizeof(access_file), "%s/.access", hls_dir);
 
-                        char pid_file[PATH_MAX];
-                        snprintf(pid_file,
-                                 sizeof(pid_file),
-                                 "%s/.pid",
-                                 entry->d_name);
-                        FILE* pf = fopen(pid_file, "r");
-                        if(pf) {
-                            int pid = 0;
-                            if(fscanf(pf, "%d", &pid) == 1 && pid > 0) {
-                                char kill_cmd[64];
-                                snprintf(kill_cmd,
-                                         sizeof(kill_cmd),
-                                         "kill -9 %d > /dev/null 2>&1",
-                                         pid);
-                                system(kill_cmd);
-                            }
-                            fclose(pf);
+            struct stat st;
+            if(stat(access_file, &st) == 0) {
+                time_t now = time(NULL);
+
+                // 1800 SECONDS = 30 MINUTES PAUSE TIMEOUT
+                if(now - st.st_mtime > 1800) {
+                    printf(
+                        "[Janitor] Connection lost for 30 minutes. Cleaning "
+                        "up: %s\n",
+                        hls_dir);
+
+                    char pid_file[PATH_MAX];
+                    snprintf(pid_file, sizeof(pid_file), "%s/.pid", hls_dir);
+                    FILE* pf = fopen(pid_file, "r");
+                    if(pf) {
+                        int pid = 0;
+                        if(fscanf(pf, "%d", &pid) == 1 && pid > 0) {
+                            char kill_cmd[64];
+                            snprintf(kill_cmd,
+                                     sizeof(kill_cmd),
+                                     "kill -9 %d > /dev/null 2>&1",
+                                     pid);
+                            system(kill_cmd);
                         }
-
-                        char rm_cmd[PATH_MAX + 16];
-                        snprintf(rm_cmd,
-                                 sizeof(rm_cmd),
-                                 "rm -rf \"%s\"",
-                                 entry->d_name);
-                        system(rm_cmd);
+                        fclose(pf);
                     }
+
+                    char rm_cmd[PATH_MAX + 16];
+                    snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf \"%s\"", hls_dir);
+                    system(rm_cmd);
                 }
             }
         }
-        closedir(dir);
+        pclose(fp);
     }
     return NULL;
 }
